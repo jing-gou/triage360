@@ -15,11 +15,29 @@ export interface TodayListDeps {
 export interface TodayList {
   /** 构建器运行那一刻，来自注入的时钟。 */
   generatedAt: string;
-  tasks: Task[];
+  entries: ListEntry[];
 }
 
 /**
- * seam 1「今日清单构建器」：取数 → 归一 → 收敛 → 排序。
+ * 清单条目 = 任务 + 它为什么排在这里。
+ * 理由不塞进任务本身：定稿的七键是跨平台最小形状（T03），打分是构建器这一侧的事。
+ */
+export interface ListEntry {
+  task: Task;
+  reason: RuleId;
+}
+
+/**
+ * 命中规则的标识，不是句子。#8「为什么是这几条」与界面措辞要的是这个标识，
+ * 分数留给 #10 学习加权再加——现在没有规则需要它。
+ */
+export type RuleId = "overdue" | "dueToday" | "recentUpdate";
+
+/** 档位表：谁排在谁前面。顺序只由这张表和档内比较决定，规则本身不写数字。 */
+const RANK: Record<RuleId, number> = { overdue: 0, dueToday: 1, recentUpdate: 2 };
+
+/**
+ * seam 1「今日清单构建器」：取数 → 归一 → 收敛 → 打分。
  * 每个 provider 每轮一个 search，外加至多一次按 id 批量取回。
  */
 export async function buildTodayList({
@@ -31,10 +49,37 @@ export async function buildTodayList({
 }: TodayListDeps): Promise<TodayList> {
   const batches = await Promise.all(providers.map((provider) => buildOne(provider, http, scope, previous)));
 
-  // 打分（T04）之前，最近有动静的排前面。normalize 已把各家时间统一成 UTC，字符串比较才成立。
-  const tasks = batches.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  // 打分（T04）先按规则分堆，堆内按最近有动静排。
+  // normalize 已把各家时间统一成 UTC，字符串比较才成立；时钟只取一次，同一轮里不许变。
+  const instant = now().toISOString();
+  const entries = batches.flat().map((task) => ({ task, reason: ruleOf(task, instant) }));
+  // 末位按 id 破平：档位与更新时间都相同的那些条目不能由 provider 返回的数组顺序决定，
+  // 那个顺序不属于本应用（T05 合并四家之后更明显）。
+  entries.sort(
+    (a, b) =>
+      RANK[a.reason] - RANK[b.reason] ||
+      b.task.updatedAt.localeCompare(a.task.updatedAt) ||
+      a.task.id.localeCompare(b.task.id),
+  );
 
-  return { generatedAt: now().toISOString(), tasks };
+  return { generatedAt: instant, entries };
+}
+
+/**
+ * 这条排在这里是哪条规则决定的。没有截止时间的条目走 `recentUpdate`。
+ * 「今日」取 UTC 日历日同一天，不是「未来 24 小时内」：构建器只有一个 instant，
+ * 想知道用户本地的今天还得再喂一个时区进来，那是另一个输入。
+ * 今天但已过去的时刻算逾期，所以先比 `dueAt < instant` 再比日。
+ */
+function ruleOf(task: Task, instant: string): RuleId {
+  if (task.dueAt === undefined) return "recentUpdate";
+  if (task.dueAt < instant) return "overdue";
+  return dayOf(task.dueAt) === dayOf(instant) ? "dueToday" : "recentUpdate";
+}
+
+/** ISO 串的前十个字符 `YYYY-MM-DD` 就是它的 UTC 日。 */
+function dayOf(instant: string): string {
+  return instant.slice(0, 10);
 }
 
 async function buildOne(

@@ -101,3 +101,9 @@ body {
   border-radius: 999px;
   font-size: 11px;
 }
+
+/* 理由标识是这张卡上唯一解释「为什么排在这里」的字，所以它要压过旁边那些限定词。 */
+.card-reason {
+  color: var(--ink);
+  font-weight: 500;
+}
