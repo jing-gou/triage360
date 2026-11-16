@@ -1,0 +1,2 @@
+# 本机 core.autocrlf=true：不加这行，新克隆出来的 .sh 会带 CRLF，shebang 变成 `bash\r`。
+*.sh text eol=lf

@@ -8,9 +8,13 @@
 
 用 `tdd` skill 驱动每个 slice：测试先在一个**待求行为**上变 **red**，实现到 **green**，再 refactor。seams 只有两条，见 issue #1 的 Testing Decisions。
 
+seam 测试一律放 `tests/` 下、命名 `*.test.ts`，不要 colocate 进 `src/`：`ci` 只跑这个 glob，放错位置等于没跑。
+
 ## 变更落地
 
 代码与文档都走 **review gate**：新建 branch → commit → `gh pr create`（PR 正文由 `pr` skill 撰写）→ 用户审阅并批准之后才合并。main 的写入只发生在合并这一步。
+
+其下还有一道**机械门禁**：required check 名为 `ci`——它是 job 名，不是 workflow 显示名。改完 `.github/branch-protection.json` 要跑 `scripts/apply-branch-protection.sh` 才生效，文件躺在仓库里不会自己上锁；脚本末尾会断言线上与文件一致。合并只能从 GitHub 侧发生（`gh pr merge`）：本地 `git merge` 再 push main 会撞 GH006，因为那个合并 commit 上从没跑过 `ci`。
 
 ## Agent skills
 
