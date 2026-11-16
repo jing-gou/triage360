@@ -12,7 +12,7 @@ import type { Http } from "../core/provider";
 export type FakePlatform = "github" | "gitee" | "jira" | "feishu";
 
 export interface FakeSource {
-  /** 原始 JSON，替身不解释形状——怎么读由各 provider 的 normalize 决定。 */
+  /** 原始 JSON：字段值一律原样回吐。id 字段名与路径形状在下面的路由表里，真连时两处要一起改。 */
   view: unknown[];
   byId?: unknown[];
 }
@@ -20,11 +20,11 @@ export interface FakeSource {
 export type FakeData = Partial<Record<FakePlatform, FakeSource>>;
 
 /**
- * 命中时返回响应体；没命中返回 null——拼错的 URL 不该静默换回一张空清单。
- * 按 id 取回时源站没有那条（真实世界是 404）也走这里：v1 里 provider 还不处理状态码，
- * 该语义由 T15 真连时一并补。批量端点用「返回的列表里少这个 id」表达，不经过这里。
+ * 命中时返回响应体；返回 null 表示这个替身没登记这个请求——拼错的 URL 不该静默换回一张空清单。
+ * 单条端点上「源站没有这条」（真实世界是 404）也走 null：v1 的 provider 还不读状态码，
+ * 那层语义由 T15 真连时一并补。有批量端点的平台用「返回的列表里少这个 id」表达，不经过这里。
  */
-type Respond = (target: URL, source: FakeSource) => unknown | null;
+type Respond = (target: URL, source: FakeSource) => unknown;
 
 const ROUTES: Record<FakePlatform, { host: string; headers?: Record<string, string>; respond: Respond }> = {
   github: {
@@ -78,7 +78,7 @@ const ROUTES: Record<FakePlatform, { host: string; headers?: Record<string, stri
   },
 };
 
-/** 替身按字段名取原始 JSON 里的值；不认识任何一家的形状。 */
+/** 按字段名取原始 JSON 里的值：只认字段名，不解释字段含义。 */
 function field(item: unknown, key: string): unknown {
   return (item as Record<string, unknown>)[key];
 }

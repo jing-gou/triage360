@@ -9,7 +9,7 @@ import { makeTaskId, remoteIdOf, type Provider, type RawItem, type Task } from "
  */
 
 const API = "https://gitee.com";
-const PROVIDER_ID = "gitee-fake";
+const PROVIDER_ID = "gitee";
 const REPOS = ["jing-gou/triage360", "jing-gou/legacy-importer"];
 
 interface GiteeIssue {
@@ -31,12 +31,16 @@ function giteeRemoteId(repo: string, number: number): string {
 }
 
 function repoOf(html_url: string): string {
-  const withoutHost = html_url.replace(/^https:\/\/gitee\.com\//, "");
-  return withoutHost.slice(0, withoutHost.indexOf("/issues/"));
+  const { pathname } = new URL(html_url);
+  const at = pathname.indexOf("/issues/");
+  // 报错只暴露路径：query 可能带凭据。仓库 issue 端点会带回 PR（/pulls/），那种条目归不成 id。
+  if (at < 0) throw new Error(`Gitee 的 html_url 不是 issue 形状：${pathname}`);
+  return pathname.slice(1, at);
 }
 
 function parseRemoteId(remoteId: string): { repo: string; number: number } {
   const at = remoteId.lastIndexOf("#");
+  if (at < 0) throw new Error(`Gitee 的远端 id 缺少仓库段：${remoteId}`);
   return { repo: remoteId.slice(0, at), number: Number(remoteId.slice(at + 1)) };
 }
 

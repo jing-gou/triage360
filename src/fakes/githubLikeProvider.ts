@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, type Http, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 假 provider：按 GitHub 的形状构造请求 URL 并解析响应，数据来自本文件字面量。
@@ -7,7 +7,7 @@ import { makeTaskId, remoteIdOf, type Http, type Provider, type RawItem, type Ta
 
 const REPO = "jing-gou/triage360";
 const API = "https://api.github.com";
-const PROVIDER_ID = "github-fake";
+const PROVIDER_ID = "github";
 
 interface GithubIssue {
   number: number;
@@ -67,7 +67,6 @@ export function createGithubLikeProvider(): Provider {
         title: issue.title,
         url: issue.html_url,
         state: issue.state,
-        // 定稿口径：`updatedAt` 一律换算成 UTC，构建器的排序只依赖这一个基准。
         updatedAt: new Date(issue.updated_at).toISOString(),
       };
     },
@@ -90,23 +89,3 @@ export function createGithubLikeProvider(): Provider {
     },
   };
 }
-
-/** GitHub 用这个响应头暴露实际授予的 scope，真值检测靠它。 */
-const SCOPES = { "x-oauth-scopes": "public_repo" };
-
-/** 取数替身：一张路由表，不发真实请求。报错只暴露路径，query 可能带凭据。 */
-export const fixtureHttp: Http = async (url) => {
-  const target = new URL(url);
-
-  if (target.pathname === "/search/issues") {
-    return { status: 200, headers: SCOPES, body: { items: [...FIXTURE_ISSUES] } };
-  }
-
-  if (target.pathname === "/issues") {
-    const wanted = new Set(target.searchParams.get("ids")?.split(","));
-    const items = FIXTURE_ISSUES.filter((issue) => wanted.has(String(issue.number)));
-    return { status: 200, headers: SCOPES, body: { items } };
-  }
-
-  throw new Error(`fixtureHttp 没有登记这个路径：${target.pathname}`);
-};

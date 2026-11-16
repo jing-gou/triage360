@@ -9,7 +9,7 @@ import { makeTaskId, remoteIdOf, type Provider, type RawItem, type Task } from "
  */
 
 const SITE = "https://sample-jira.atlassian.net";
-const PROVIDER_ID = "jira-sample";
+const PROVIDER_ID = "jira";
 
 interface JiraIssue {
   id: string;
@@ -47,7 +47,6 @@ export function createJiraLikeProvider(): Provider {
         title: issue.fields.summary,
         url: `${SITE}/browse/${issue.key}`,
         state: issue.fields.status.name,
-        // 定稿口径：`updatedAt` 一律换算成 UTC。各家原始格式不保证可比。
         updatedAt: new Date(issue.fields.updated).toISOString(),
       };
     },

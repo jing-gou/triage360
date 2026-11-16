@@ -101,13 +101,3 @@ body {
   border-radius: 999px;
   font-size: 11px;
 }
-
-.sources {
-  margin: -12px 0 18px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.sources .source + .source::before {
-  content: " · ";
-}

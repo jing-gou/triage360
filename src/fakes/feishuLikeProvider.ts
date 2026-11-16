@@ -7,7 +7,7 @@ import { makeTaskId, remoteIdOf, type Provider, type RawItem, type Task } from "
  */
 
 const API = "https://open.feishu.cn";
-const PROVIDER_ID = "feishu-sample";
+const PROVIDER_ID = "feishu";
 
 interface FeishuTask {
   task_id: string;

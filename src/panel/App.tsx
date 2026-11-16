@@ -12,10 +12,10 @@ const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "
  * 所以都标样例数据；T09 / T15 真连后各自摘掉这个标记。
  */
 const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
-  "github-fake": { label: "GitHub", sample: "样例数据" },
-  "gitee-fake": { label: "Gitee", sample: "样例数据" },
-  "jira-sample": { label: "Jira", sample: "样例数据" },
-  "feishu-sample": { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
+  github: { label: "GitHub", sample: "样例数据" },
+  gitee: { label: "Gitee", sample: "样例数据" },
+  jira: { label: "Jira", sample: "样例数据" },
+  feishu: { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
 };
 
 export function App() {
@@ -41,30 +41,28 @@ export function App() {
   return (
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
-      <p className="sources">
-        {providers.map((provider) => (
-          <span className="source" key={provider.id}>
-            {SOURCE_LABELS[provider.id]?.label ?? provider.id}
-          </span>
-        ))}
-      </p>
       <ol className="cards">
-        {list.tasks.map((task) => (
-          <li className="card" key={task.id}>
-            <a className="card-title" href={task.url}>
-              {task.title}
-            </a>
-            <p className="card-meta">
-              <span className="card-source">{SOURCE_LABELS[task.providerId]?.label ?? task.providerId}</span>
-              {SOURCE_LABELS[task.providerId]?.sample && (
-                <span className="card-sample">{SOURCE_LABELS[task.providerId]?.sample}</span>
-              )}
-              <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
-            </p>
-          </li>
-        ))}
+        {list.tasks.map((task) => {
+          const source = SOURCE_LABELS[task.providerId];
+          return (
+            <li className="card" key={task.id}>
+              <a className="card-title" href={task.url}>
+                {task.title}
+              </a>
+              <p className="card-meta">
+                <span className="card-source">{source?.label ?? task.providerId}</span>
+                {source?.sample && <span className="card-sample">{source.sample}</span>}
+                <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
+              </p>
+            </li>
+          );
+        })}
       </ol>
-      <p className="corner">{WALL_CLOCK.format(generatedAt)}</p>
+      {/* 状态信息只有一个位置：右下角。来源名写在这里，卡片上只写自己那一家。 */}
+      <p className="corner">
+        {providers.map((provider) => SOURCE_LABELS[provider.id]?.label ?? provider.id).join(" · ")} ·{" "}
+        {WALL_CLOCK.format(generatedAt)}
+      </p>
     </main>
   );
 }
