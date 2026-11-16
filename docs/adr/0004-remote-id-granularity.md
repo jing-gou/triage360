@@ -1,7 +1,7 @@
 # ADR-0004 · 远端 id 的唯一性粒度由各 provider 自己决定
 
-**决策**：任务 id 仍是 `providerId:remoteId`（`makeTaskId` / `remoteIdOf` 是唯一的编解码处），但 `remoteId` 的粒度由平台决定：GitHub 用 issue number，Jira 用全局 issue id，飞书用 task_guid，**Gitee 用 `owner/repo#number`**。
+**决策**：任务 id 仍是 `providerId:remoteId`（`makeTaskId` / `remoteIdOf` 是唯一的编解码处），但 `remoteId` 的粒度由平台决定：GitHub 用 issue number，Jira 用全局 issue id，飞书用 task_guid，**Gitee 用 `owner/repo#number`**。`providerId` 是**永久键**，取平台名（`github` / `gitee` / `jira` / `feishu`），真连顶替假 provider 时不改；样例与真连的差别只由界面标注表达，不进 id。
 
-**原因**：Gitee 的 issue number 只在仓库内唯一，而「指派给我」要遍历仓库（官方没有跨仓库端点，见 `research/platform-limits-and-landing-form.md` 的 Gitee 节）。两个仓库的 313 号如果不带仓库名，会被 `search` 与 `getByIds` 认成同一条——跨平台合并（T05）会把它们合成一张卡，而按 id 刷新会取回错误的条目。仓库名从 issue 自己的 `html_url` 里取，因为列表响应不带仓库字段。
+**原因**：Gitee 的 issue number 只在仓库内唯一，而「指派给我」要遍历仓库（官方没有跨仓库端点，见 `research/platform-limits-and-landing-form.md` 的 Gitee 节）。两个仓库的 313 号如果不带仓库名，会被 `search` 与 `getByIds` 认成同一条——跨平台合并（T05）会把它们合成一张卡，而按 id 刷新会取回错误的条目。仓库名从 issue 自己的 `html_url` 里取，因为列表响应不带仓库字段。逐条取回而非批量：Gitee 与飞书都没有按 id 批量端点，所以这两家的 `getByIds` 一次调用发 N 个请求（调用次数仍是每轮一次，见 ADR-0002）；这是平台代价，不是契约例外。`providerId` 之所以要一起定死：它是 `Task.id` 的前半段，而 id 一旦落库就成了 `previous` 的匹配键——T09 / T15 把 `github-fake` 改成 `github` 会让上一轮全部条目对不上，等于凭空制造一次数据迁移。
 
-**被放弃的选项**：给 `Task` 加第七个字段 `repo`（把一家平台的粒度问题写进全局形状，`docs/PRD.md:101` 的界面与规划层只认归一化形状这条就破了）；用 Gitee 的全局 issue `id` 字段（该字段是否存在未实测，T15 真连时若实测可用可以换，代价是已落库的 id 全部对不上——所以 `previous` 里的 id 一旦写进存储就不该再造）。
+**被放弃的选项**：给 `Task` 加第七个字段 `repo`（把一家平台的粒度问题写进全局形状，`docs/PRD.md:101` 的界面与规划层只认归一化形状这条就破了）；用 Gitee 的全局 issue `id` 字段（该字段是否存在未实测，T15 真连时若实测可用可以换，代价是已落库的 id 全部对不上——所以 `previous` 里的 id 一旦写进存储就不该再造）；把样例程度编进 id（`-fake` / `-sample` 后缀）——它看着诚实，但真连时要么改名（破上面的永久键）要么让真 provider 顶着一个说假话的名字。

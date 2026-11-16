@@ -4,7 +4,7 @@
 
 - **今日清单（Today List）** — 一次构建得到的有序任务集合，带生成时间。seam 1 的输出。
 - **任务卡（Card）** — 今日清单里一条任务在界面上的呈现。
-- **来源行（Source Row）** — 面板顶部一次列出四个平台名的那一行。ticket 里的「Jira 卡 / 飞书卡」指它的一项，不是任务卡。
+- **来源角标（Source Corner）** — 右下角角标里列出本轮接线的平台名与生成时间的那一行。ticket 里的「Jira 卡 / 飞书卡」指带来源名的**任务卡**，不是它。
 - **构建器（`buildTodayList`）** — seam 1。输入只有 providers、注入的取数通道、注入的时钟、范围、上一轮的任务集合；除此之外没有第二种信息来源。
 - **轮次（Round）** — 一次 `buildTodayList` 调用。跨轮状态由调用方保管：构建器读 `previous`，自己不落盘，provider 也不记上一轮。
 - **provider** — 一个平台的适配器，实现七法契约：`search` / `getByIds` / `normalize` / `doneStates` / `deletedStates` / `pollIntervalMs` / `scopeDescriptor`。
