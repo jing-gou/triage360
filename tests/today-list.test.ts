@@ -116,6 +116,31 @@ describe("seam 1 · normalize 定稿：两家形状不同的源站归一化成�
   });
 });
 
+describe("seam 1 · 定稿的门：输出形状就是那六个字段", () => {
+  // toEqual 不会因为多一个 `dueAt: undefined` 而红，所以形状要单独钉住：
+  // 「定稿」这句话得有一道能挡反例的门。
+  const http = fakeHttp({
+    github: { view: [issue(2001, "修复登录回调", "open", "2026-11-16T08:20:00Z")] },
+    gitee: { view: [giteeIssue("jing-gou/triage360", 313, "回调地址改名后失效", "progress", "2026-11-16T17:05:00+08:00")] },
+    jira: { view: [ticket("10007", "TRI-7", "整理提交材料", "In Progress", "2026-11-16T09:00:00.000+0800")] },
+    feishu: { view: [feishuTask("task-9", "催一下季度评审材料", false, "2026-11-16T13:10:00+08:00")] },
+  });
+
+  it("四家归一化之后的字段集合完全一致，且只有六个", async () => {
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider(), createGiteeLikeProvider(), createJiraLikeProvider(), createFeishuSampleProvider()],
+      http,
+      now: clock,
+      scope,
+    });
+
+    const shapes = list.tasks.map((task) => Object.keys(task).sort().join(","));
+
+    expect(list.tasks).toHaveLength(4);
+    expect([...new Set(shapes)]).toEqual(["id,providerId,state,title,updatedAt,url"]);
+  });
+});
+
 describe("seam 1 · 已完成条目收敛", () => {
   it("doneStates 命中的条目不出现在输出清单里，两家的判法各自生效", async () => {
     const http = fakeHttp({
@@ -229,6 +254,37 @@ describe("seam 1 · 下一轮构建", () => {
     });
 
     expect(round2.tasks).toEqual([]);
+  });
+
+  it("没有批量端点的平台用 404 表达「这条没有了」：按跳过保留，而不是让整轮失败", async () => {
+    const gitee = createGiteeLikeProvider();
+    const firstRound = fakeHttp({
+      gitee: {
+        view: [giteeIssue("jing-gou/triage360", 313, "回调地址改名后失效", "progress", "2026-11-16T17:05:00+08:00")],
+      },
+    });
+    const round1 = await buildTodayList({ providers: [gitee], http: firstRound, now: clock, scope });
+
+    // 本轮视图不返回这条，单条端点给 404。既不是完成也不是删除，所以条目该带着上一轮字段留下。
+    const secondRound = fakeHttp({ gitee: { view: [], byId: [] } });
+    const round2 = await buildTodayList({
+      providers: [gitee],
+      http: secondRound,
+      now: clock,
+      scope,
+      previous: round1.tasks,
+    });
+
+    expect(round2.tasks).toEqual([
+      {
+        id: "gitee:jing-gou/triage360#313",
+        providerId: "gitee",
+        title: "回调地址改名后失效",
+        url: "https://gitee.com/jing-gou/triage360/issues/313",
+        state: "progress",
+        updatedAt: "2026-11-16T09:05:00.000Z",
+      },
+    ]);
   });
 });
 

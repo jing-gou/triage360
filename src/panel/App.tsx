@@ -58,10 +58,20 @@ export function App() {
           );
         })}
       </ol>
-      {/* 状态信息只有一个位置：右下角。来源名写在这里，卡片上只写自己那一家。 */}
+      {/*
+        状态信息只有一个位置：右下角。来源名写在这里，卡片上只写自己那一家。
+        样例标记也必须出现在这里：某一家本轮被收敛到零条时，卡片全没了，角标是唯一还无条件可见的元素，
+        不带限定词就等于宣称这一家已经接通（`docs/PRD.md` 的真实程度表：必须各自标明，不得含糊）。
+      */}
       <p className="corner">
-        {providers.map((provider) => SOURCE_LABELS[provider.id]?.label ?? provider.id).join(" · ")} ·{" "}
-        {WALL_CLOCK.format(generatedAt)}
+        {providers
+          .map((provider) => {
+            const source = SOURCE_LABELS[provider.id];
+            const name = source?.label ?? provider.id;
+            return source?.sample ? `${name} 样例` : name;
+          })
+          .join(" · ")}{" "}
+        · {WALL_CLOCK.format(generatedAt)}
       </p>
     </main>
   );

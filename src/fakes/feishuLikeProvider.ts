@@ -30,11 +30,13 @@ export function createFeishuSampleProvider(): Provider {
       return (res.body as { data: { items: RawItem[] } }).data.items;
     },
 
+    // 同样没有批量端点：一个 id 一次请求，404 表示这条源站已经没有了。
     async getByIds(ids, http) {
       const raws = await Promise.all(
         ids.map(async (id) => {
           const res = await http(`${API}/open-apis/task/v2/tasks/${remoteIdOf(id)}`);
-          return [res.body] as RawItem[];
+          if (res.status === 404) return [] as RawItem[];
+          return [res.body as RawItem] as RawItem[];
         }),
       );
       return raws.flat();

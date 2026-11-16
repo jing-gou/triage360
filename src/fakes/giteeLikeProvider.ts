@@ -58,13 +58,15 @@ export function createGiteeLikeProvider(): Provider {
       return batches.flat();
     },
 
-    // 也没有按 id 批量端点：一个 id 一次请求。
+    // 也没有按 id 批量端点：一个 id 一次请求，404 表示这条源站已经没有了。
     async getByIds(ids, http) {
       const raws = await Promise.all(
         ids.map(async (id) => {
           const { repo, number } = parseRemoteId(remoteIdOf(id));
           const res = await http(`${API}/api/v5/repos/${repo}/issues/${number}`);
-          return [res.body] as RawItem[];
+          // 省略而不是抛错：一次抛错会让一家平台的缺失变成整张清单不见（ADR-0003）。
+          if (res.status === 404) return [] as RawItem[];
+          return [res.body as RawItem] as RawItem[];
         }),
       );
       return raws.flat();
