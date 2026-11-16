@@ -9,6 +9,8 @@ export interface HttpRequestInit {
 
 export interface HttpResponse {
   status: number;
+  /** 真实 fetch 的响应头。GitHub 用 `X-OAuth-Scopes` 做 scope 真值检测，缺了它 T09 只能改契约。 */
+  headers: Record<string, string>;
   body: unknown;
 }
 

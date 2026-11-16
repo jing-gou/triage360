@@ -52,14 +52,11 @@ export function createGithubLikeProvider(): Provider {
       return (res.body as { items: RawItem[] }).items;
     },
 
+    // 一次批量请求取回全部 id：每 provider 每轮 ≈ 一个请求，不是每任务一个。
     async getByIds(ids, http) {
-      return Promise.all(
-        ids.map(async (id) => {
-          const number = remoteIdOf(id);
-          const res = await http(`${API}/repos/${REPO}/issues/${number}`);
-          return res.body as RawItem;
-        }),
-      );
+      const query = encodeURIComponent(ids.map(remoteIdOf).join(","));
+      const res = await http(`${API}/issues?ids=${query}`);
+      return (res.body as { items: RawItem[] }).items;
     },
 
     normalize(raw): Task {
@@ -82,6 +79,7 @@ export function createGithubLikeProvider(): Provider {
       return [];
     },
 
+    // 占位数字：Q6 只定了「可见标签页轮询 + 手动 refresh」，间隔本身还没决策。
     pollIntervalMs() {
       return 30_000;
     },
@@ -92,19 +90,22 @@ export function createGithubLikeProvider(): Provider {
   };
 }
 
+/** GitHub 用这个响应头暴露实际授予的 scope，真值检测靠它。 */
+const SCOPES = { "x-oauth-scopes": "public_repo" };
+
 /** 取数替身：一张路由表，不发真实请求。报错只暴露路径，query 可能带凭据。 */
 export const fixtureHttp: Http = async (url) => {
-  const path = new URL(url).pathname;
+  const target = new URL(url);
 
-  if (path === "/search/issues") {
-    return { status: 200, body: { items: [...FIXTURE_ISSUES] } };
+  if (target.pathname === "/search/issues") {
+    return { status: 200, headers: SCOPES, body: { items: [...FIXTURE_ISSUES] } };
   }
 
-  const single = /^\/repos\/[^/]+\/[^/]+\/issues\/(\d+)$/.exec(path);
-  const issue = single && FIXTURE_ISSUES.find((i) => i.number === Number(single[1]));
-  if (issue) {
-    return { status: 200, body: issue };
+  if (target.pathname === "/issues") {
+    const wanted = new Set(target.searchParams.get("ids")?.split(","));
+    const items = FIXTURE_ISSUES.filter((issue) => wanted.has(String(issue.number)));
+    return { status: 200, headers: SCOPES, body: { items } };
   }
 
-  throw new Error(`fixtureHttp 没有登记这个路径：${path}`);
+  throw new Error(`fixtureHttp 没有登记这个路径：${target.pathname}`);
 };

@@ -24,15 +24,18 @@ body {
   padding: 40px 20px 72px;
 }
 
-.panel-head h1 {
-  margin: 0;
+.panel-title {
+  margin: 0 0 20px;
   font-size: 20px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
-.panel-meta {
-  margin: 6px 0 24px;
+.corner {
+  position: fixed;
+  right: 16px;
+  bottom: 12px;
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
 }
