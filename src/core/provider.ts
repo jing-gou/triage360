@@ -20,7 +20,11 @@ export type Http = (url: string, init?: HttpRequestInit) => Promise<HttpResponse
 /** 平台原始条目：形状由各 provider 自己解释，核心层不认识它。 */
 export type RawItem = Record<string, unknown>;
 
-/** 归一化后的任务：跨平台共用的最小形状。normalize 的定稿在 T03。 */
+/**
+ * 归一化后的任务：跨平台共用的最小形状，定稿于 T03。
+ * 六个字段之外不许夹带平台专有信息——各家差异一律在 `normalize` 里消化掉，
+ * 否则跨平台合并（T05）与打分（T04）会建在原始字段上。
+ */
 export interface Task {
   /** `${providerId}:${remoteId}`，跨轮次稳定。 */
   id: string;
@@ -29,7 +33,7 @@ export interface Task {
   url: string;
   /** 平台原始状态字面量，由 doneStates / deletedStates 解释。 */
   state: string;
-  /** ISO 8601，平台侧最后更新时间。 */
+  /** 统一成 UTC 的 `toISOString()` 形状：各家原始格式（`Z` / `+0800`）不可直接比大小。 */
   updatedAt: string;
 }
 

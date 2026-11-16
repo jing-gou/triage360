@@ -67,7 +67,8 @@ export function createGithubLikeProvider(): Provider {
         title: issue.title,
         url: issue.html_url,
         state: issue.state,
-        updatedAt: issue.updated_at,
+        // 定稿口径：`updatedAt` 一律换算成 UTC，构建器的排序只依赖这一个基准。
+        updatedAt: new Date(issue.updated_at).toISOString(),
       };
     },
 
