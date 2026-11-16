@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Provider, Scope } from "../core/provider";
-import { buildTodayList, type TodayList } from "../core/today-list";
+import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, sampleHttp } from "../fakes/samples";
 
 const scope: Scope = { assignee: "me" };
@@ -16,6 +16,16 @@ const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
   gitee: { label: "Gitee", sample: "样例数据" },
   jira: { label: "Jira", sample: "样例数据" },
   feishu: { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
+};
+
+/**
+ * 理由标识的措辞（`docs/PRD.md`：规则打分决定顺序，措辞是另一层）。
+ * 界面只翻译标识，不再判断一次档位——判断在 seam 1 里，两处口径会分叉。
+ */
+const REASON_LABELS: Record<RuleId, string> = {
+  overdue: "已逾期",
+  dueToday: "今日到期",
+  recentUpdate: "最近更新",
 };
 
 export function App() {
@@ -42,7 +52,7 @@ export function App() {
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
       <ol className="cards">
-        {list.tasks.map((task) => {
+        {list.entries.map(({ task, reason }) => {
           const source = SOURCE_LABELS[task.providerId];
           return (
             <li className="card" key={task.id}>
@@ -52,6 +62,7 @@ export function App() {
               <p className="card-meta">
                 <span className="card-source">{source?.label ?? task.providerId}</span>
                 {source?.sample && <span className="card-sample">{source.sample}</span>}
+                <span className="card-reason">{REASON_LABELS[reason]}</span>
                 <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
               </p>
             </li>

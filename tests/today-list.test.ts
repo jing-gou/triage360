@@ -40,7 +40,7 @@ describe("seam 1 · 今日清单构建器", () => {
   it("给出 3 条任务，顺序由构建器决定而非 provider 返回的数组顺序", async () => {
     const list = await buildTodayList(deps());
 
-    expect(list.tasks.map((task) => task.title)).toEqual([
+    expect(list.entries.map((entry) => entry.task.title)).toEqual([
       "修复登录回调",
       "写本周周报",
       "整理提交材料",
@@ -95,7 +95,7 @@ describe("seam 1 · normalize 定稿：两家形状不同的源站归一化成�
       scope,
     });
 
-    expect(list.tasks).toEqual([
+    expect(list.entries.map((entry) => entry.task)).toEqual([
       {
         id: "github:2001",
         providerId: "github",
@@ -160,7 +160,7 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
       scope,
     });
 
-    expect(list.tasks).toEqual([
+    expect(list.entries.map((entry) => entry.task)).toEqual([
       {
         id: "github:2002",
         providerId: "github",
@@ -202,9 +202,9 @@ describe("seam 1 · 定稿的门：输出形状就是那七个键", () => {
       scope,
     });
 
-    const shapes = list.tasks.map((task) => Object.keys(task).sort().join(","));
+    const shapes = list.entries.map((entry) => Object.keys(entry.task).sort().join(","));
 
-    expect(list.tasks).toHaveLength(4);
+    expect(list.entries).toHaveLength(4);
     expect([...new Set(shapes)]).toEqual(["dueAt,id,providerId,state,title,updatedAt,url"]);
   });
 });
@@ -234,7 +234,7 @@ describe("seam 1 · 已完成条目收敛", () => {
       scope,
     });
 
-    expect(list.tasks.map((task) => task.title)).toEqual(["修复登录回调", "写本周周报"]);
+    expect(list.entries.map((entry) => entry.task.title)).toEqual(["修复登录回调", "写本周周报"]);
   });
 });
 
@@ -251,7 +251,7 @@ describe("seam 1 · 下一轮构建", () => {
       },
     });
     const round1 = await buildTodayList({ providers: [jira], http: firstRound, now: clock, scope });
-    expect(round1.tasks).toHaveLength(2);
+    expect(round1.entries).toHaveLength(2);
 
     // 第二轮：两条都离开了"派给我"的视图，按 id 批量取回时一条仍在进行、一条已是 Deleted。
     // 只保留仍在进行的那条，才同时满足"已删除的消失"和"消失不等于删除"。
@@ -269,10 +269,10 @@ describe("seam 1 · 下一轮构建", () => {
       http: secondRound,
       now: clock,
       scope,
-      previous: round1.tasks,
+      previous: round1.entries.map((entry) => entry.task),
     });
 
-    expect(round2.tasks.map((task) => task.title)).toEqual(["补齐回调文档"]);
+    expect(round2.entries.map((entry) => entry.task.title)).toEqual(["补齐回调文档"]);
   });
 
   it("批量取回一条都没返回时是「跳过」：条目带着上一轮的字段留在清单里", async () => {
@@ -288,10 +288,10 @@ describe("seam 1 · 下一轮构建", () => {
       http: secondRound,
       now: clock,
       scope,
-      previous: round1.tasks,
+      previous: round1.entries.map((entry) => entry.task),
     });
 
-    expect(round2.tasks).toEqual([
+    expect(round2.entries.map((entry) => entry.task)).toEqual([
       {
         id: "jira:10041",
         providerId: "jira",
@@ -318,10 +318,10 @@ describe("seam 1 · 下一轮构建", () => {
       http: secondRound,
       now: clock,
       scope,
-      previous: round1.tasks,
+      previous: round1.entries.map((entry) => entry.task),
     });
 
-    expect(round2.tasks).toEqual([]);
+    expect(round2.entries.map((entry) => entry.task)).toEqual([]);
   });
 
   it("没有批量端点的平台用 404 表达「这条没有了」：按跳过保留，而不是让整轮失败", async () => {
@@ -340,10 +340,10 @@ describe("seam 1 · 下一轮构建", () => {
       http: secondRound,
       now: clock,
       scope,
-      previous: round1.tasks,
+      previous: round1.entries.map((entry) => entry.task),
     });
 
-    expect(round2.tasks).toEqual([
+    expect(round2.entries.map((entry) => entry.task)).toEqual([
       {
         id: "gitee:jing-gou/triage360#313",
         providerId: "gitee",
@@ -370,7 +370,7 @@ describe("seam 1 · Gitee 与飞书 的形状差异", () => {
 
     const list = await buildTodayList({ providers: [gitee], http, now: clock, scope });
 
-    expect(list.tasks).toEqual([
+    expect(list.entries.map((entry) => entry.task)).toEqual([
       {
         id: "gitee:jing-gou/triage360#313",
         providerId: "gitee",
@@ -403,7 +403,7 @@ describe("seam 1 · Gitee 与飞书 的形状差异", () => {
 
     const list = await buildTodayList({ providers: [feishu], http, now: clock, scope });
 
-    expect(list.tasks).toEqual([
+    expect(list.entries.map((entry) => entry.task)).toEqual([
       {
         id: "feishu:task-9",
         providerId: "feishu",
