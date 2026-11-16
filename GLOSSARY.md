@@ -11,4 +11,4 @@
 - **假 provider** — 按真实平台形状构造请求并解析响应、数据来自字面量的 provider。T09 起被真实接入顶替，接口不变。
 - **范围（Scope）** — 清单查什么。v1 只有「派给谁」。
 - **取数通道（`Http`）** — 注入给 provider 的请求函数。错误信息只暴露 URL 路径，query 可能带凭据。
-- **任务（Task）** — `normalize` 的输出，跨平台共用的最小形状：`id` / `providerId` / `title` / `url` / `state` / `updatedAt`，T03 定稿。`updatedAt` 一律是 UTC；平台专有信息不许夹带在六字段之外。
+- **任务（Task）** — `normalize` 的输出，跨平台共用的最小形状：`id` / `providerId` / `title` / `url` / `state` / `updatedAt` / `dueAt`，T03 定稿。七键恒定、不按平台分叉：没有截止时间也要显式写 `dueAt: undefined`。`updatedAt` 与 `dueAt` 一律 UTC；平台专有信息不许夹带在七键之外，跨平台共有的语义（截止时间）属于定稿的一部分。

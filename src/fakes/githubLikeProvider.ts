@@ -15,6 +15,8 @@ interface GithubIssue {
   html_url: string;
   state: string;
   updated_at: string;
+  /** GitHub 的 issue 自己没有截止日期，`due_on` 挂在 milestone 上，且 milestone 与 due_on 都可以是 null。 */
+  milestone?: { due_on: string | null } | null;
 }
 
 /** 数组顺序刻意不是最终顺序：界面顺序由 seam 1 的输出决定。 */
@@ -68,6 +70,7 @@ export function createGithubLikeProvider(): Provider {
         url: issue.html_url,
         state: issue.state,
         updatedAt: new Date(issue.updated_at).toISOString(),
+        dueAt: issue.milestone?.due_on ? new Date(issue.milestone.due_on).toISOString() : undefined,
       };
     },
 

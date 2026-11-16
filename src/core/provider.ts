@@ -22,8 +22,9 @@ export type RawItem = Record<string, unknown>;
 
 /**
  * 归一化后的任务：跨平台共用的最小形状，定稿于 T03。
- * 六个字段之外不许夹带平台专有信息——各家差异一律在 `normalize` 里消化掉，
+ * 七个键恒定，不按平台分叉；平台专有信息不许夹带在七键之外——各家差异一律在 `normalize` 里消化掉，
  * 否则跨平台合并（T05）与打分（T04）会建在原始字段上。
+ * `dueAt` 之所以在里面：逾期与今日到期是跨平台共有的语义（US#23），不是 GitHub 的 milestone 泄漏进了全局形状。
  */
 export interface Task {
   /** `${providerId}:${remoteId}`，跨轮次稳定。 */
@@ -35,6 +36,11 @@ export interface Task {
   state: string;
   /** 统一成 UTC 的 `toISOString()` 形状：各家原始格式（`Z` / `+0800`）不可直接比大小。 */
   updatedAt: string;
+  /**
+   * 截止时间，同样一律 UTC；没有截止时间的条目显式写 `undefined`，让键集合恒定。
+   * 它是跨平台共有的语义（US#23 要逾期与今日到期在视觉上更强），不是某家平台的专有信息。
+   */
+  dueAt?: string;
 }
 
 /** 清单范围：v1 只有「派给我的」。 */

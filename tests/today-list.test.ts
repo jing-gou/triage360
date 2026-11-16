@@ -116,9 +116,77 @@ describe("seam 1 · normalize 定稿：两家形状不同的源站归一化成�
   });
 });
 
-describe("seam 1 · 定稿的门：输出形状就是那六个字段", () => {
+describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC 基准", () => {
+  // 为什么现在就把 dueAt 收进定稿：#6 要「逾期 / 今日到期置顶」，而核心层不许碰原始字段
+  // （`docs/PRD.md:101`）。不在这里收，T04 只剩两条路——加第 8 个契约方法，或伸手进 raw。
+  // GitHub 的 issue 自己没有截止时间，`due_on` 挂在 milestone 上且可为 null；
+  // Jira 的 `fields.duedate` 带 +0800。日期形式（不含时刻）的 duedate 怎么折算成「几点算到期」
+  // 属 #6 的判定，这里只做时间基准。
+  const http = fakeHttp({
+    github: {
+      view: [
+        {
+          number: 2002,
+          title: "补全导入模板",
+          html_url: "https://github.com/jing-gou/triage360/issues/2002",
+          state: "open",
+          updated_at: "2026-11-16T06:00:00Z",
+          milestone: { due_on: "2026-11-17T23:00:00Z" },
+        },
+      ],
+    },
+    jira: {
+      view: [
+        {
+          id: "10008",
+          key: "TRI-8",
+          self: "https://sample-jira.atlassian.net/rest/api/3/issue/10008",
+          fields: {
+            summary: "核对工时表",
+            status: { name: "To Do" },
+            updated: "2026-11-16T12:00:00.000+0800",
+            duedate: "2026-11-18T09:00:00.000+0800",
+          },
+        },
+      ],
+    },
+  });
+
+  it("两家的原始格式换算成同一个 UTC 基准，可比较大小", async () => {
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider(), createJiraLikeProvider()],
+      http,
+      now: clock,
+      scope,
+    });
+
+    expect(list.tasks).toEqual([
+      {
+        id: "github:2002",
+        providerId: "github",
+        title: "补全导入模板",
+        url: "https://github.com/jing-gou/triage360/issues/2002",
+        state: "open",
+        updatedAt: "2026-11-16T06:00:00.000Z",
+        dueAt: "2026-11-17T23:00:00.000Z",
+      },
+      {
+        id: "jira:10008",
+        providerId: "jira",
+        title: "核对工时表",
+        url: "https://sample-jira.atlassian.net/browse/TRI-8",
+        state: "To Do",
+        updatedAt: "2026-11-16T04:00:00.000Z",
+        dueAt: "2026-11-18T01:00:00.000Z",
+      },
+    ]);
+  });
+});
+
+describe("seam 1 · 定稿的门：输出形状就是那七个键", () => {
   // toEqual 不会因为多一个 `dueAt: undefined` 而红，所以形状要单独钉住：
-  // 「定稿」这句话得有一道能挡反例的门。
+  // 「定稿」这句话得有一道能挡反例的门。键集合也不能按平台分叉——
+  // 没有截止时间的条目照样写出 dueAt，否则 #6 的打分要先判「这家有没有这个键」。
   const http = fakeHttp({
     github: { view: [issue(2001, "修复登录回调", "open", "2026-11-16T08:20:00Z")] },
     gitee: { view: [giteeIssue("jing-gou/triage360", 313, "回调地址改名后失效", "progress", "2026-11-16T17:05:00+08:00")] },
@@ -126,7 +194,7 @@ describe("seam 1 · 定稿的门：输出形状就是那六个字段", () => {
     feishu: { view: [feishuTask("task-9", "催一下季度评审材料", false, "2026-11-16T13:10:00+08:00")] },
   });
 
-  it("四家归一化之后的字段集合完全一致，且只有六个", async () => {
+  it("四家归一化之后的键集合完全一致，且恒为七个", async () => {
     const list = await buildTodayList({
       providers: [createGithubLikeProvider(), createGiteeLikeProvider(), createJiraLikeProvider(), createFeishuSampleProvider()],
       http,
@@ -137,7 +205,7 @@ describe("seam 1 · 定稿的门：输出形状就是那六个字段", () => {
     const shapes = list.tasks.map((task) => Object.keys(task).sort().join(","));
 
     expect(list.tasks).toHaveLength(4);
-    expect([...new Set(shapes)]).toEqual(["id,providerId,state,title,updatedAt,url"]);
+    expect([...new Set(shapes)]).toEqual(["dueAt,id,providerId,state,title,updatedAt,url"]);
   });
 });
 

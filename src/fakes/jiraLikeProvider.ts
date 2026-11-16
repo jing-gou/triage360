@@ -18,6 +18,8 @@ interface JiraIssue {
     summary: string;
     status: { name: string };
     updated: string;
+    /** Jira Cloud 的 `duedate` 可以是 null；带时刻时同样带本地偏移。 */
+    duedate?: string | null;
   };
 }
 
@@ -32,7 +34,7 @@ export function createJiraLikeProvider(): Provider {
       return (res.body as { issues: RawItem[] }).issues;
     },
 
-    // 一次 jql 取回整批 id：与 search 同一个端点，每 provider 每轮 ≈ 一个批量请求。
+    // 一次 jql 取回整批 id：与 search 同一个端点，所以这家一轮就是一个 HTTP 请求（逐平台代价见 ADR-0002）。
     async getByIds(ids, http) {
       const jql = encodeURIComponent(`id in (${ids.map(remoteIdOf).join(",")})`);
       const res = await http(`${SITE}/rest/api/3/search?jql=${jql}`);
@@ -48,6 +50,7 @@ export function createJiraLikeProvider(): Provider {
         url: `${SITE}/browse/${issue.key}`,
         state: issue.fields.status.name,
         updatedAt: new Date(issue.fields.updated).toISOString(),
+        dueAt: issue.fields.duedate ? new Date(issue.fields.duedate).toISOString() : undefined,
       };
     },
 
