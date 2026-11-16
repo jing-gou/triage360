@@ -1,0 +1,22 @@
+name: ci
+
+# 只在 PR 上跑：main 的写入只发生在合并这一步，合并后再跑一次拿不到额外信息。
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    # required check 认的是这个名字，改它等于换门禁（见 .github/branch-protection.json）。
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
