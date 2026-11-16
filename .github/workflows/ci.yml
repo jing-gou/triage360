@@ -4,7 +4,11 @@ name: gate
 
 # 单触发：只在 PR 上跑。有意接受的缺口——strict=false，base 落后于 main 时，
 # 真正落进 main 的那个合并结果没有被任何一次运行跑过。
-on: pull_request
+# types 里带上 ready_for_review：draft PR 转正式时若没有新 commit，默认三种类型都不会触发，
+# required check 会一直停在 Expected，而 enforce_admins=true 之下谁都出不去。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
