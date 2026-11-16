@@ -70,3 +70,22 @@ export function createJiraLikeProvider(): Provider {
     },
   };
 }
+
+/** 样例数据：Jira 在 v1 只做内部自证，界面上必须写明「样例数据」（见 `docs/PRD.md` 的真实程度表）。 */
+export const SAMPLE_JIRA_ISSUES: JiraIssue[] = [
+  {
+    id: "10031",
+    key: "TRI-31",
+    fields: { summary: "清理过期构建产物", status: { name: "In Progress" }, updated: "2026-11-16T15:12:00.000+0800" },
+  },
+  {
+    id: "10027",
+    key: "TRI-27",
+    fields: { summary: "对接 3LO 回调", status: { name: "To Do" }, updated: "2026-11-15T20:40:00.000+0800" },
+  },
+  {
+    id: "10019",
+    key: "TRI-19",
+    fields: { summary: "补监控面板", status: { name: "Done" }, updated: "2026-11-16T12:00:00.000+0800" },
+  },
+];
