@@ -1,15 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { buildTodayList } from "../src/core/today-list";
 import type { Scope } from "../src/core/provider";
-import { createGithubLikeProvider, fixtureHttp } from "../src/fakes/githubLikeProvider";
-import { createJiraLikeProvider } from "../src/fakes/jiraLikeProvider";
+import { createFeishuSampleProvider } from "../src/fakes/feishuLikeProvider";
 import { fakeHttp } from "../src/fakes/fakeHttp";
+import { createGiteeLikeProvider } from "../src/fakes/giteeLikeProvider";
+import { createGithubLikeProvider, FIXTURE_ISSUES } from "../src/fakes/githubLikeProvider";
+import { createJiraLikeProvider } from "../src/fakes/jiraLikeProvider";
 
 const scope: Scope = { assignee: "me" };
 const clock = () => new Date("2026-11-17T09:00:00+08:00");
 
 function deps() {
-  return { providers: [createGithubLikeProvider()], http: fixtureHttp, now: clock, scope };
+  return {
+    providers: [createGithubLikeProvider()],
+    http: fakeHttp({ github: { view: FIXTURE_ISSUES } }),
+    now: clock,
+    scope,
+  };
 }
 
 /** 两家源站的原始形状字面量。构造器只省重复，不做任何判断。 */
@@ -19,6 +26,14 @@ function issue(number: number, title: string, state: string, updated_at: string)
 
 function ticket(id: string, key: string, summary: string, status: string, updated: string) {
   return { id, key, fields: { summary, status: { name: status }, updated } };
+}
+
+function giteeIssue(repo: string, number: number, title: string, state: string, updated_at: string) {
+  return { number, title, state, updated_at, html_url: `https://gitee.com/${repo}/issues/${number}` };
+}
+
+function feishuTask(task_id: string, summary: string, done: boolean, updated_at: string) {
+  return { task_id, summary, done, updated_at };
 }
 
 describe("seam 1 · 今日清单构建器", () => {
@@ -82,16 +97,16 @@ describe("seam 1 · normalize 定稿：两家形状不同的源站归一化成�
 
     expect(list.tasks).toEqual([
       {
-        id: "github-fake:2001",
-        providerId: "github-fake",
+        id: "github:2001",
+        providerId: "github",
         title: "修复登录回调",
         url: "https://github.com/jing-gou/triage360/issues/2001",
         state: "open",
         updatedAt: "2026-11-16T08:20:00.000Z",
       },
       {
-        id: "jira-sample:10007",
-        providerId: "jira-sample",
+        id: "jira:10007",
+        providerId: "jira",
         title: "整理提交材料",
         url: "https://sample-jira.atlassian.net/browse/TRI-7",
         state: "In Progress",
@@ -185,8 +200,8 @@ describe("seam 1 · 下一轮构建", () => {
 
     expect(round2.tasks).toEqual([
       {
-        id: "jira-sample:10041",
-        providerId: "jira-sample",
+        id: "jira:10041",
+        providerId: "jira",
         title: "排查 Gitee 403",
         url: "https://sample-jira.atlassian.net/browse/TRI-41",
         state: "In Progress",
@@ -195,7 +210,7 @@ describe("seam 1 · 下一轮构建", () => {
     ]);
   });
 
-  it("本轮视图里已经出现过的条目不会再按 id 取回，也不会被上一轮的旧状态复活", async () => {
+  it("刚完成的条目不会被上一轮的旧状态复活", async () => {
     const github = createGithubLikeProvider();
     const firstRound = fakeHttp({ github: { view: [issue(3001, "写本周周报", "open", "2026-11-16T08:00:00Z")] } });
     const round1 = await buildTodayList({ providers: [github], http: firstRound, now: clock, scope });
@@ -214,5 +229,65 @@ describe("seam 1 · 下一轮构建", () => {
     });
 
     expect(round2.tasks).toEqual([]);
+  });
+});
+
+describe("seam 1 · Gitee 与飞书 的形状差异", () => {
+  it("同一数字在两个仓库里是两张卡：远端 id 带仓库段", async () => {
+    const gitee = createGiteeLikeProvider();
+    const http = fakeHttp({
+      gitee: {
+        view: [
+          giteeIssue("jing-gou/legacy-importer", 313, "导入的历史工时少一天", "ongoing", "2026-11-16T15:30:00+08:00"),
+          giteeIssue("jing-gou/triage360", 313, "回调地址改名后失效", "progress", "2026-11-16T17:05:00+08:00"),
+        ],
+      },
+    });
+
+    const list = await buildTodayList({ providers: [gitee], http, now: clock, scope });
+
+    expect(list.tasks).toEqual([
+      {
+        id: "gitee:jing-gou/triage360#313",
+        providerId: "gitee",
+        title: "回调地址改名后失效",
+        url: "https://gitee.com/jing-gou/triage360/issues/313",
+        state: "progress",
+        updatedAt: "2026-11-16T09:05:00.000Z",
+      },
+      {
+        id: "gitee:jing-gou/legacy-importer#313",
+        providerId: "gitee",
+        title: "导入的历史工时少一天",
+        url: "https://gitee.com/jing-gou/legacy-importer/issues/313",
+        state: "ongoing",
+        updatedAt: "2026-11-16T07:30:00.000Z",
+      },
+    ]);
+  });
+
+  it("完成态是布尔值的平台：布尔折成状态字面量后照样收敛", async () => {
+    const feishu = createFeishuSampleProvider();
+    const http = fakeHttp({
+      feishu: {
+        view: [
+          feishuTask("task-9", "催一下季度评审材料", false, "2026-11-16T13:10:00+08:00"),
+          feishuTask("task-12", "整理值班交接清单", true, "2026-11-16T10:05:00+08:00"),
+        ],
+      },
+    });
+
+    const list = await buildTodayList({ providers: [feishu], http, now: clock, scope });
+
+    expect(list.tasks).toEqual([
+      {
+        id: "feishu:task-9",
+        providerId: "feishu",
+        title: "催一下季度评审材料",
+        url: "https://applink.feishu.cn/client/todo/detail?guid=task-9",
+        state: "open",
+        updatedAt: "2026-11-16T05:10:00.000Z",
+      },
+    ]);
   });
 });
