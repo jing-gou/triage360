@@ -12,6 +12,8 @@
 
 代码与文档都走 **review gate**：新建 branch → commit → `gh pr create`（PR 正文由 `pr` skill 撰写）→ 用户审阅并批准之后才合并。main 的写入只发生在合并这一步。
 
+其下还有一道**机械门禁**：required check 名为 `ci`。改完 `.github/branch-protection.json` 要跑 `scripts/apply-branch-protection.sh` 才生效——文件躺在仓库里不会自己上锁。
+
 ## Agent skills
 
 ### Issue tracker
