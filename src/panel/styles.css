@@ -84,4 +84,20 @@ body {
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.card-source {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.card-sample {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
 }

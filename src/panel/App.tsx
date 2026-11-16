@@ -1,18 +1,29 @@
 import { useEffect, useState } from "react";
-import { remoteIdOf, type Provider, type Scope } from "../core/provider";
+import type { Provider, Scope } from "../core/provider";
 import { buildTodayList, type TodayList } from "../core/today-list";
-import { createGithubLikeProvider, fixtureHttp } from "../fakes/githubLikeProvider";
+import { createSampleProviders, sampleHttp } from "../fakes/samples";
 
 const scope: Scope = { assignee: "me" };
-const providers: Provider[] = [createGithubLikeProvider()];
+const providers: Provider[] = createSampleProviders();
 const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * 来源在界面上的真实程度（`docs/PRD.md` 的真实程度表）。四条现在都是字面量数据，
+ * 所以都标样例数据；T09 / T15 真连后各自摘掉这个标记。
+ */
+const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
+  github: { label: "GitHub", sample: "样例数据" },
+  gitee: { label: "Gitee", sample: "样例数据" },
+  jira: { label: "Jira", sample: "样例数据" },
+  feishu: { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
+};
 
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
 
   useEffect(() => {
     let alive = true;
-    buildTodayList({ providers, http: fixtureHttp, now: () => new Date(), scope }).then((next) => {
+    buildTodayList({ providers, http: sampleHttp, now: () => new Date(), scope }).then((next) => {
       if (alive) setList(next);
     });
     return () => {
@@ -31,20 +42,36 @@ export function App() {
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
       <ol className="cards">
-        {list.tasks.map((task) => (
-          <li className="card" key={task.id}>
-            <a className="card-title" href={task.url}>
-              {task.title}
-            </a>
-            <p className="card-meta">
-              #{remoteIdOf(task.id)} · 更新于 {formatTime(task.updatedAt, generatedAt)}
-            </p>
-          </li>
-        ))}
+        {list.tasks.map((task) => {
+          const source = SOURCE_LABELS[task.providerId];
+          return (
+            <li className="card" key={task.id}>
+              <a className="card-title" href={task.url}>
+                {task.title}
+              </a>
+              <p className="card-meta">
+                <span className="card-source">{source?.label ?? task.providerId}</span>
+                {source?.sample && <span className="card-sample">{source.sample}</span>}
+                <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
+              </p>
+            </li>
+          );
+        })}
       </ol>
+      {/*
+        状态信息只有一个位置：右下角。来源名写在这里，卡片上只写自己那一家。
+        样例标记也必须出现在这里：某一家本轮被收敛到零条时，卡片全没了，角标是唯一还无条件可见的元素，
+        不带限定词就等于宣称这一家已经接通（`docs/PRD.md` 的真实程度表：必须各自标明，不得含糊）。
+      */}
       <p className="corner">
-        {providers.map((provider) => provider.scopeDescriptor(scope)).join("　")} ·{" "}
-        {WALL_CLOCK.format(generatedAt)}
+        {providers
+          .map((provider) => {
+            const source = SOURCE_LABELS[provider.id];
+            const name = source?.label ?? provider.id;
+            return source?.sample ? `${name} 样例` : name;
+          })
+          .join(" · ")}{" "}
+        · {WALL_CLOCK.format(generatedAt)}
       </p>
     </main>
   );
