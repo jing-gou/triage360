@@ -194,4 +194,25 @@ describe("seam 1 · 下一轮构建", () => {
       },
     ]);
   });
+
+  it("本轮视图里已经出现过的条目不会再按 id 取回，也不会被上一轮的旧状态复活", async () => {
+    const github = createGithubLikeProvider();
+    const firstRound = fakeHttp({ github: { view: [issue(3001, "写本周周报", "open", "2026-11-16T08:00:00Z")] } });
+    const round1 = await buildTodayList({ providers: [github], http: firstRound, now: clock, scope });
+
+    // 第二轮：视图里这条已是 closed，而按 id 批量取回没返回它。
+    // 「没返回 = 跳过」只该管本轮见不到的条目，否则上一轮的 open 会把刚完成的这条重新请回清单。
+    const secondRound = fakeHttp({
+      github: { view: [issue(3001, "写本周周报", "closed", "2026-11-17T08:00:00Z")], byId: [] },
+    });
+    const round2 = await buildTodayList({
+      providers: [github],
+      http: secondRound,
+      now: clock,
+      scope,
+      previous: round1.tasks,
+    });
+
+    expect(round2.tasks).toEqual([]);
+  });
 });

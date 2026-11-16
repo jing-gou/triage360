@@ -48,20 +48,26 @@ async function buildOne(
   const deleted = new Set(provider.deletedStates());
   const stillOpen = (task: Task) => !done.has(task.state) && !deleted.has(task.state);
 
-  const seen = (await provider.search(scope, http)).map(provider.normalize).filter(stillOpen);
+  const seen = (await provider.search(scope, http)).map(provider.normalize);
 
-  // 上一轮有、本轮视图里没有：可能已被删除，也可能只是这次没返回——一次批量取回分辨这两种。
+  // 本轮视图已经给出这条的状态，就不再按 id 问第二次：再问一次只会把上一轮的旧状态请回来。
   const unseen = previous.filter(
     (task) => task.providerId === provider.id && !seen.some((s) => s.id === task.id),
   );
-  if (unseen.length === 0) return seen;
+  const carried = unseen.length === 0 ? [] : await carryOver(provider, http, unseen);
 
+  return [...seen, ...carried].filter(stillOpen);
+}
+
+/**
+ * 上一轮有、本轮视图里没有的条目：一次批量取回分辨「已被删除」与「这次没返回」。
+ * 批量没返回的 id 视为跳过——保留上一轮那条，而不是当成已删除。
+ */
+async function carryOver(provider: Provider, http: Http, unseen: readonly Task[]): Promise<Task[]> {
   const refreshed = new Map(
     (await provider.getByIds(unseen.map((task) => task.id), http))
       .map(provider.normalize)
       .map((task) => [task.id, task] as const),
   );
-
-  // 批量取回没返回的 id 视为跳过：保留上一轮那条，而不是当成已删除。
-  return [...seen, ...unseen.map((task) => refreshed.get(task.id) ?? task).filter(stillOpen)];
+  return unseen.map((task) => refreshed.get(task.id) ?? task);
 }
