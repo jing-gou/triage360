@@ -9,7 +9,7 @@ Engineering skills 探索 codebase 时，应如何消费这个 repo 的 domain d
 - repo 根目录的 **`GLOSSARY.md`**
 - **`docs/adr/`**：读取与你即将处理区域相关的 ADRs
 
-另外，本 repo 在写代码之前已经有一份完整的决策共识 **`DECISIONS.md`**（六段结论 + Q1–Q48 决策台账 + 两周排期与 kill 时点 + 一手事实出处）。它不是领域词汇表，而是**任何 spec、ticket、实现决策的 upstream**：与 `DECISIONS.md` 冲突的做法要么先改它、要么在 ADR 里显式记录为什么偏离。`§4 被推翻或修订过的前提` 一节记录了已经死掉的假设，不要回潮。
+另外，本 repo 在写代码之前已经有一份完整的决策共识 **`DECISIONS.md`**（六段结论 + Q1–Q48 决策台账 + 两周排期与降级时点 + 一手事实出处）。它不是领域词汇表，而是**任何 spec、ticket、实现决策的 upstream**：与 `DECISIONS.md` 冲突的做法要么先改它、要么在 ADR 里显式记录为什么偏离。`§4 被推翻或修订过的前提` 一节记录了已经死掉的假设，不要回潮。
 
 如果 `GLOSSARY.md` 或 `docs/adr/` 不存在，**静默继续**。不要标记缺失；不要提前建议创建。`/domain-modeling` skill（经由 `/grill-with-docs` 和 `/improve-codebase-architecture` 调用）会在 terms 或 decisions 实际被解决时懒创建它们。
 
