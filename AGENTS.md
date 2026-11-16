@@ -4,6 +4,10 @@
 
 动手前先读 `DECISIONS.md`；它是本仓库所有 spec、ticket 与实现决策的 upstream。v1 的 spec 在 issue #1（仓库留档：`docs/PRD.md`）。
 
+## 写代码
+
+用 `tdd` skill 驱动每个 slice：测试先在一个**待求行为**上变 **red**，实现到 **green**，再 refactor。seams 只有两条，见 issue #1 的 Testing Decisions。
+
 ## 变更落地
 
 代码与文档都走 **review gate**：新建 branch → commit → `gh pr create`（PR 正文由 `pr` skill 撰写）→ 用户审阅并批准之后才合并。main 的写入只发生在合并这一步。
