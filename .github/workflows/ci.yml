@@ -1,4 +1,6 @@
-name: ci
+# 只是 Actions 列表里的显示名。required check 认的是下面 job 的 name，不是它——两者刻意取不同值，
+# 免得有人改了显示名却以为换了门禁。
+name: gate
 
 # 单触发：只在 PR 上跑。有意接受的缺口——strict=false，base 落后于 main 时，
 # 真正落进 main 的那个合并结果没有被任何一次运行跑过。
