@@ -53,3 +53,12 @@ export interface Provider {
   /** 人可读的范围说明，用于界面上的角标与范围显示。 */
   scopeDescriptor(scope: Scope): string;
 }
+
+/** 任务 id 的编码只在这两个函数里出现，其余地方不解析它。 */
+export function makeTaskId(providerId: string, remoteId: string | number): string {
+  return `${providerId}:${remoteId}`;
+}
+
+export function remoteIdOf(taskId: string): string {
+  return taskId.slice(taskId.indexOf(":") + 1);
+}

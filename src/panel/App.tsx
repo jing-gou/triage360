@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Provider, Scope } from "../core/provider";
+import { remoteIdOf, type Provider, type Scope } from "../core/provider";
 import { buildTodayList, type TodayList } from "../core/today-list";
 import { createGithubLikeProvider, fixtureHttp } from "../fakes/githubLikeProvider";
 
@@ -39,7 +39,7 @@ export function App() {
               {task.title}
             </a>
             <p className="card-meta">
-              {task.providerId} #{task.id.slice(task.providerId.length + 1)} · 更新于{" "}
+              {task.providerId} #{remoteIdOf(task.id)} · 更新于{" "}
               {formatTime(task.updatedAt, new Date(list.generatedAt))}
             </p>
           </li>

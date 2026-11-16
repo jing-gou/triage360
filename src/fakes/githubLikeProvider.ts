@@ -1,4 +1,4 @@
-import type { Http, Provider, RawItem, Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, type Http, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 假 provider：按 GitHub 的形状构造请求 URL 并解析响应，数据来自本文件字面量。
@@ -55,7 +55,7 @@ export function createGithubLikeProvider(): Provider {
     async getByIds(ids, http) {
       return Promise.all(
         ids.map(async (id) => {
-          const number = id.slice(PROVIDER_ID.length + 1);
+          const number = remoteIdOf(id);
           const res = await http(`${API}/repos/${REPO}/issues/${number}`);
           return res.body as RawItem;
         }),
@@ -65,7 +65,7 @@ export function createGithubLikeProvider(): Provider {
     normalize(raw): Task {
       const issue = raw as unknown as GithubIssue;
       return {
-        id: `${PROVIDER_ID}:${issue.number}`,
+        id: makeTaskId(PROVIDER_ID, issue.number),
         providerId: PROVIDER_ID,
         title: issue.title,
         url: issue.html_url,
