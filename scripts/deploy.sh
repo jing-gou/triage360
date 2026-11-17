@@ -36,6 +36,7 @@ DOMAIN=${DOMAIN%%/*}
 NODE_BIN=$(command -v node) || die "没有 node（要 ≥22.12）"
 NPM_BIN=$(command -v npm) || die "没有 npm"
 RUN_PATH=$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin
+NPM_CACHE=/tmp/triage360-npm-cache
 command -v nginx >/dev/null || die "没有 nginx"
 command -v certbot >/dev/null || die "没有 certbot"
 
@@ -47,13 +48,17 @@ fi
 mkdir -p "$APP_DIR"
 
 # 2. 代码：这一份检出归部署所有，有本地改动就停下等人看过。
-# 检出归 triage360，脚本以 root 跑：每次显式放行这一份，别去改 root 的全局 git config。
-GIT_SAFE=(-c "safe.directory=$APP_DIR")
+# git 的 safe.directory 只认 system/global 配置（命令行 -c 被刻意忽略），
+# 所以 git 一律以 triage360 身份跑，root 只负责装包与写 systemd / nginx。
+run_as_app() { runuser -u "$APP_USER" -- env HOME="$APP_DIR" PATH="$RUN_PATH" "$@"; }
+# 旧版脚本把 npm 缓存落在检出里；它不是代码，清掉才能判「干净」。
+rm -rf "$APP_DIR/.npm"
 if [ -d "$APP_DIR/.git" ]; then
-  [ -z "$(git "${GIT_SAFE[@]}" -C "$APP_DIR" status --porcelain)" ] || die "$APP_DIR 有未提交改动，先人工确认"
+  status=$(run_as_app git -C "$APP_DIR" status --porcelain) || die "读不出 $APP_DIR 的 git 状态"
+  [ -z "$status" ] || die "$APP_DIR 有未提交改动，先人工确认"
   log "更新代码到 origin/$BRANCH"
-  git "${GIT_SAFE[@]}" -C "$APP_DIR" fetch --prune origin "$BRANCH"
-  git "${GIT_SAFE[@]}" -C "$APP_DIR" reset --hard FETCH_HEAD
+  run_as_app git -C "$APP_DIR" fetch --prune origin "$BRANCH"
+  run_as_app git -C "$APP_DIR" reset --hard FETCH_HEAD
 else
   log "克隆 $REPO"
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
@@ -62,8 +67,8 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
 # 3. 构建：devDependencies 参与编译，最终只有 dist-server/index.js 上线。
 log "npm ci + build:server"
-runuser -u "$APP_USER" -- env HOME="$APP_DIR" PATH="$RUN_PATH" "$NPM_BIN" --prefix "$APP_DIR" ci
-runuser -u "$APP_USER" -- env HOME="$APP_DIR" PATH="$RUN_PATH" "$NPM_BIN" --prefix "$APP_DIR" run build:server
+run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" ci
+run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" run build:server
 
 # 4. 运行环境：六键、root 600；内容没变就不碰文件。
 ENV_FILE=$APP_DIR/.env
