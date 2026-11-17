@@ -42,6 +42,15 @@ export function saveManualOrder(ids: readonly string[]): void {
   write(ORDER_KEY, JSON.stringify(ids));
 }
 
+/** 本地清除入口（#13 承接 #10 AC#5）：删掉顺序键，下一轮构建回到规则打分。 */
+export function clearManualOrder(): void {
+  try {
+    localStorage.removeItem(ORDER_KEY);
+  } catch {
+    // 有意吞掉：这里没有比「保持原样」更好的动作。
+  }
+}
+
 export function hasSeenOrderNotice(): boolean {
   return read(NOTICE_KEY) === "1";
 }

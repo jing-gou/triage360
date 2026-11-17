@@ -4,8 +4,9 @@ import { sourceGroupOf } from "../core/source-group";
 import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
 import { createGithubProvider } from "../providers/github";
-import { API_BASE, adoptSessionFromUrl, fetchGithubItems, forgetSession, UnauthenticatedError } from "./api";
+import { API_BASE, adoptSessionFromUrl, fetchGithubItems, forgetSession, revokeSession, UnauthenticatedError } from "./api";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
+import { clearLocalRecords, hasLocalRecords } from "./local-records";
 import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrder } from "./manual-order";
 
 const scope: Scope = { assignee: "me" };
@@ -47,12 +48,19 @@ interface OrderNotice {
   to: number;
 }
 
+/** 右下角的三个弹层（#13）：连接前的自陈、撤销授权、清除本地记录。同一时刻只有一个。 */
+type Dialog = "consent" | "revoke" | "clear-local";
+
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
   const [notice, setNotice] = useState<OrderNotice | null>(null);
   const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
   const [live, setLive] = useState(false);
   const [reconnect, setReconnect] = useState(false);
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [hasLocal, setHasLocal] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -60,6 +68,8 @@ export function App() {
     const zoneOffsetMinutes = -new Date().getTimezoneOffset();
     // 上一轮排的顺序与往期放置都回到构建器：存储归界面管，构建器只认注入（ADR-0007、ADR-0009）。
     const local = { manualOrder: loadManualOrder(), placements: loadLearningRecords() };
+    // 本地那两份记录是否存在，决定右下角出不出现「清除本地记录」——它是它们唯一的删除入口。
+    setHasLocal(hasLocalRecords());
 
     async function load() {
       // 没有构建期后端地址就没有真实链路：面板保持样例，右下角也不出现「连接」。
@@ -132,6 +142,8 @@ export function App() {
       at: new Date().toISOString(),
       position: to,
     });
+    // 第一笔本地记录刚落下：右下角当场出现「清除本地记录」，不必等下一次刷新。
+    setHasLocal(true);
     // 标记要等这句话真被看过才落盘：没关就刷新，下一次拖拽还会说一遍。
     if (!hasSeenOrderNotice()) setNotice({ title: moved.task.title, from, to });
   }
@@ -139,6 +151,37 @@ export function App() {
   function dismissNotice(): void {
     markOrderNoticeSeen();
     setNotice(null);
+  }
+
+  function openDialog(next: Dialog): void {
+    setDialogError(null);
+    setDialogBusy(false);
+    setDialog(next);
+  }
+
+  /** 撤销（#13）：服务端物理删除并当场验证；失败就留在这一层说清楚，不假装成功。 */
+  async function revoke(): Promise<void> {
+    const session = adoptSessionFromUrl();
+    if (session === null) {
+      setDialogError("这台浏览器里没有会话记录，可能已经撤销过了。");
+      return;
+    }
+    setDialogBusy(true);
+    try {
+      await revokeSession(API_BASE, session);
+    } catch {
+      setDialogBusy(false);
+      setDialogError("撤销没有完成：服务端不可达或删除验证失败了，稍后再试。");
+      return;
+    }
+    forgetSession();
+    window.location.reload();
+  }
+
+  /** 清完重载：内存里那份顺序还按旧记录排着，重载才和盘上一致。 */
+  function clearLocal(): void {
+    clearLocalRecords();
+    window.location.reload();
   }
 
   if (!list) {
@@ -243,9 +286,25 @@ export function App() {
         {" · "}
         {API_BASE !== "" && !live && (
           <>
-            <a className="corner-link" href={`${API_BASE}/auth/github`}>
+            <button className="corner-link" onClick={() => openDialog("consent")} type="button">
               {reconnect ? "连接已失效 · 重新连接 GitHub" : "连接 GitHub"}
-            </a>
+            </button>
+            {" · "}
+          </>
+        )}
+        {live && (
+          <>
+            <button className="corner-link" onClick={() => openDialog("revoke")} type="button">
+              撤销授权
+            </button>
+            {" · "}
+          </>
+        )}
+        {hasLocal && (
+          <>
+            <button className="corner-link" onClick={() => openDialog("clear-local")} type="button">
+              清除本地记录
+            </button>
             {" · "}
           </>
         )}
@@ -277,6 +336,112 @@ export function App() {
             <button autoFocus className="notice-close" onClick={dismissNotice} type="button">
               知道了
             </button>
+          </div>
+        </div>
+      )}
+      {/*
+        连接前的自陈屏（#13 AC#1）：点「连接」先出这一层，显式同意才跳 OAuth。
+        不做常驻入口、不加说明行——它只在伸手连接的那一刻占住一屏。
+      */}
+      {dialog === "consent" && (
+        <div className="notice-mask" onClick={() => setDialog(null)}>
+          <div
+            className="notice"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="notice-title" id="dialog-title">
+              连接 GitHub 之前
+            </h2>
+            <p className="notice-body">
+              同意后跳到 GitHub 的授权页面。服务端存两样东西：一枚 access token，和你的 GitHub
+              登录名。token 只用来读指派给你、还没关闭的 issue 的标题、状态、更新时间与截止时间；正文、评论、代码不取也不存。
+            </p>
+            <p className="notice-body">
+              token 加密落盘：数据库文件泄露不导致凭据泄露。但这挡不住服务器被完全控制——进程运行时手里有密钥。
+            </p>
+            <p className="notice-body">
+              怎么清：右下角的「撤销授权」会在服务端物理删除这枚 token 和这条记录，删除后当场验证；连续
+              30 天未访问也会自动清除。
+            </p>
+            <p className="notice-body">
+              两处例外：① 你主动排序时会记下放置记录（哪个来源、放到第几位、什么时间），让之后的新条目排得聪明一点；②
+              手动顺序和这些放置记录只存在这台浏览器的本地存储里，上面两条删除义务不覆盖它们，何时清理由浏览器决定。右下角的「清除本地记录」是它们唯一的删除入口。
+            </p>
+            <div className="notice-actions">
+              <button className="notice-secondary" onClick={() => setDialog(null)} type="button">
+                先不连接
+              </button>
+              <button
+                autoFocus
+                className="notice-close"
+                onClick={() => {
+                  window.location.href = `${API_BASE}/auth/github?tier=public`;
+                }}
+                type="button"
+              >
+                同意并连接 GitHub
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dialog === "revoke" && (
+        <div className="notice-mask" onClick={() => { if (!dialogBusy) setDialog(null); }}>
+          <div
+            className="notice"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="notice-title" id="dialog-title">
+              撤销授权
+            </h2>
+            <p className="notice-body">
+              会在服务端物理删除这条记录：加密的令牌、GitHub 登录名与这条租户的全部数据，删除后当场验证。之后面板回到样例清单，随时可以重新连接。
+            </p>
+            <p className="notice-body">
+              这台浏览器里的手动顺序与放置记录不受影响——要清它们，用「清除本地记录」。
+            </p>
+            {dialogError !== null && <p className="notice-error">{dialogError}</p>}
+            <div className="notice-actions">
+              <button className="notice-secondary" disabled={dialogBusy} onClick={() => setDialog(null)} type="button">
+                取消
+              </button>
+              <button autoFocus className="notice-close" disabled={dialogBusy} onClick={revoke} type="button">
+                {dialogBusy ? "撤销中…" : "撤销并删除"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dialog === "clear-local" && (
+        <div className="notice-mask" onClick={() => setDialog(null)}>
+          <div
+            className="notice"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="notice-title" id="dialog-title">
+              清除本地记录
+            </h2>
+            <p className="notice-body">
+              会删掉这台浏览器里的两份记录：手动顺序与放置记录。之后这一屏回到规则打分，学习加权消失。
+              服务端保存的授权与数据不受影响。
+            </p>
+            <div className="notice-actions">
+              <button className="notice-secondary" onClick={() => setDialog(null)} type="button">
+                取消
+              </button>
+              <button autoFocus className="notice-close" onClick={clearLocal} type="button">
+                清除
+              </button>
+            </div>
           </div>
         </div>
       )}

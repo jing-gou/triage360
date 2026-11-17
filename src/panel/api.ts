@@ -40,3 +40,12 @@ export async function fetchGithubItems(base: string, session: string): Promise<G
   if (!res.ok) throw new Error(`items 返回 ${res.status}`);
   return (await res.json()) as GithubItems;
 }
+
+/** 撤销（#13）：服务端物理删除该租户的 token 与全部数据，并当场验证；验证失败服务端回 500。 */
+export async function revokeSession(base: string, session: string): Promise<void> {
+  const res = await fetch(`${base}/api/logout`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session}` },
+  });
+  if (!res.ok && res.status !== 401) throw new Error(`logout 返回 ${res.status}`);
+}
