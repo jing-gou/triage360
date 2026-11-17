@@ -14,7 +14,10 @@ export interface CredentialSnapshot {
   now: number;
   /** null = 没有已知过期时刻（平台不给或不作废）。 */
   expiresAt: number | null;
-  /** 最近一次刷新**尝试**的时刻，成功失败都记——失败后下一次判定才能指向重连而不是空转。 */
+  /**
+   * 最近一次刷新**尝试**的时刻：调用方试过之后写入（`recordRefreshAttempt`），成败都记。
+   * 只有「尝试时刻 ≥ 过期时刻」才会让判定转向重连；提前量窗口内的失败仍按请求再刷。
+   */
   lastRefreshAt: number | null;
   isDemoTenant: boolean;
 }
@@ -49,12 +52,13 @@ export interface RefreshedTokens {
   expiresAt: number | null;
 }
 
-export function freshCredential(tokens: RefreshedTokens, now: number): CredentialRecord {
+/** 由一组新鲜 token 造记录：刷新或重连成功后落地的那一整对。 */
+export function credentialFromTokens(tokens: RefreshedTokens, at: number): CredentialRecord {
   return {
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,
     expiresAt: tokens.expiresAt,
-    lastRefreshAt: now,
+    lastRefreshAt: at,
   };
 }
 
@@ -74,7 +78,7 @@ export function rotateCredential(
   now: number,
 ): RotationOutcome {
   const replacedRefresh = refreshed.refreshToken !== null;
-  const next = freshCredential(
+  const next = credentialFromTokens(
     { ...refreshed, refreshToken: replacedRefresh ? refreshed.refreshToken : current.refreshToken },
     now,
   );
