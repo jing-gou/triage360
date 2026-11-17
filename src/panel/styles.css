@@ -53,6 +53,16 @@ body {
   font-size: 12px;
 }
 
+/* 连接入口只在样例态出现；与标题同一套约定：常态不带下划线，悬停才出现。 */
+a.corner-link {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+a.corner-link:hover {
+  text-decoration: underline;
+}
+
 .cards {
   list-style: none;
   margin: 0;

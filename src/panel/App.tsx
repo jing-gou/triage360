@@ -3,16 +3,18 @@ import type { Provider, Scope } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
 import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
+import { createGithubProvider } from "../providers/github";
+import { API_BASE, adoptSessionFromUrl, fetchGithubItems, forgetSession, UnauthenticatedError } from "./api";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrder } from "./manual-order";
 
 const scope: Scope = { assignee: "me" };
-const providers: Provider[] = createSampleProviders();
+const sampleProviders: Provider[] = createSampleProviders();
 const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
 /**
- * 来源在界面上的真实程度（`docs/PRD.md` 的真实程度表）。四条现在都是字面量数据，
- * 所以都标样例数据；T09 / T15 真连后各自摘掉这个标记。
+ * 来源在界面上的真实程度（`docs/PRD.md` 的真实程度表）。默认四家都是字面量数据，
+ * 所以都标样例数据；接上 GitHub 会话之后这一家不再带样例标记（T09），其余三家等 T15 / T17 / T19。
  */
 const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
   github: { label: "GitHub", sample: "样例数据" },
@@ -20,6 +22,12 @@ const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
   jira: { label: "Jira", sample: "样例数据" },
   feishu: { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
 };
+
+/** 接上真实会话时 GitHub 不再是样例；其余几家原样保留。 */
+function sourceLabel(providerId: string, live: boolean): { label: string; sample?: string } {
+  const base = SOURCE_LABELS[providerId] ?? { label: providerId };
+  return live && providerId === "github" ? { label: base.label } : base;
+}
 
 /**
  * 理由标识的措辞（`docs/PRD.md`：规则打分决定顺序，措辞是另一层）。
@@ -43,25 +51,60 @@ export function App() {
   const [list, setList] = useState<TodayList | null>(null);
   const [notice, setNotice] = useState<OrderNotice | null>(null);
   const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
+  const [live, setLive] = useState(false);
+  const [reconnect, setReconnect] = useState(false);
 
   useEffect(() => {
     let alive = true;
     // 「今日」按访客日历里的今天判：偏移由界面这一侧喂进来，构建器自己不读宿主时区（ADR-0005）。
     const zoneOffsetMinutes = -new Date().getTimezoneOffset();
-    buildTodayList({
-      providers,
-      http: sampleHttp,
-      now: () => new Date(),
-      scope,
-      zoneOffsetMinutes,
-      // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
-      sameEvent: demoSameEvent,
-      // 上一轮排的顺序与往期放置都回到构建器：存储归界面管，构建器只认注入（ADR-0007、ADR-0009）。
-      manualOrder: loadManualOrder(),
-      placements: loadLearningRecords(),
-    }).then((next) => {
-      if (alive) setList(next);
-    });
+    // 上一轮排的顺序与往期放置都回到构建器：存储归界面管，构建器只认注入（ADR-0007、ADR-0009）。
+    const local = { manualOrder: loadManualOrder(), placements: loadLearningRecords() };
+
+    async function load() {
+      // 没有构建期后端地址就没有真实链路：面板保持样例，右下角也不出现「连接」。
+      const session = API_BASE === "" ? null : adoptSessionFromUrl();
+      if (session !== null) {
+        try {
+          const { items, login } = await fetchGithubItems(API_BASE, session);
+          const next = await buildTodayList({
+            providers: [createGithubProvider()],
+            // 条目已经从服务端取回，这一次取数不再出发请求；归一与排序仍在本机走 seam 1。
+            http: async () => ({ status: 200, headers: {}, body: { items } }),
+            now: () => new Date(),
+            scope: { assignee: login },
+            zoneOffsetMinutes,
+            // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
+            sameEvent: demoSameEvent,
+            ...local,
+          });
+          if (!alive) return;
+          setList(next);
+          setLive(true);
+          setReconnect(false);
+          return;
+        } catch (error) {
+          // 会话失效或后端不可达都退回样例清单：这一屏不说谎，角标里不写「已连上」。
+          if (error instanceof UnauthenticatedError) forgetSession();
+          if (alive) setReconnect(true);
+        }
+      }
+      const next = await buildTodayList({
+        providers: sampleProviders,
+        http: sampleHttp,
+        now: () => new Date(),
+        scope,
+        zoneOffsetMinutes,
+        // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
+        sameEvent: demoSameEvent,
+        ...local,
+      });
+      if (!alive) return;
+      setList(next);
+      setLive(false);
+    }
+
+    load();
     return () => {
       alive = false;
     };
@@ -113,7 +156,11 @@ export function App() {
           // 合并卡的来源槽一格一个来源，各自跳到各自的记录；没合并的卡片 DOM 不变。
           const sources = mergedFrom ?? [task];
           const samples = [
-            ...new Set(sources.map((one) => SOURCE_LABELS[one.providerId]?.sample).filter((one) => one !== undefined)),
+            ...new Set(
+              sources
+                .map((one) => sourceLabel(one.providerId, live).sample)
+                .filter((one) => one !== undefined),
+            ),
           ];
           // 落点线画在目标的上沿还是下沿，取决于这张卡是往上拖还是往下拖。
           const dropClass =
@@ -152,8 +199,8 @@ export function App() {
               </a>
               <p className="card-meta">
                 {sources.map((one) => {
-                  const source = SOURCE_LABELS[one.providerId];
-                  const label = source?.label ?? one.providerId;
+                  const source = sourceLabel(one.providerId, live);
+                  const label = source.label;
                   return mergedFrom === undefined ? (
                     <span className="card-source" key={one.id}>
                       {label}
@@ -183,16 +230,26 @@ export function App() {
         角标列的是本轮接线的家，顺序取注册顺序而不是清单项次：按清单排的话，一家被收敛到零条时它连名字一起消失。
         样例标记也必须出现在这里：某一家本轮被收敛到零条时，卡片全没了，角标是唯一还无条件可见的元素，
         不带限定词就等于宣称这一家已经接通（`docs/PRD.md` 的真实程度表：必须各自标明，不得含糊）。
+        连接入口只在「有后端地址、但这一屏还是样例」时出现：连上了就不再占位置（常态要安静），
+        失效时说「重新连接」而不是把整屏换成错误信息。
       */}
       <p className="corner">
-        {providers
+        {(live ? [createGithubProvider()] : sampleProviders)
           .map((provider) => {
-            const source = SOURCE_LABELS[provider.id];
-            const name = source?.label ?? provider.id;
-            return source?.sample ? `${name} 样例` : name;
+            const source = sourceLabel(provider.id, live);
+            return source.sample ? `${source.label} 样例` : source.label;
           })
-          .join(" · ")}{" "}
-        · {WALL_CLOCK.format(generatedAt)}
+          .join(" · ")}
+        {" · "}
+        {API_BASE !== "" && !live && (
+          <>
+            <a className="corner-link" href={`${API_BASE}/auth/github`}>
+              {reconnect ? "连接已失效 · 重新连接 GitHub" : "连接 GitHub"}
+            </a>
+            {" · "}
+          </>
+        )}
+        {WALL_CLOCK.format(generatedAt)}
       </p>
       {/* 只在第一次主动排序后出现，看过并关掉才落「已说过」的标记（AC#3）。 */}
       {notice !== null && (
