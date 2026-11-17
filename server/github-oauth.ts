@@ -18,7 +18,7 @@ const TOKEN_URL = "https://github.com/login/oauth/access_token";
  * 公私两档（T12）：两次独立授权、两个 token 并存，官方 "Creating multiple tokens for OAuth apps"
  * 背书这一形态。`repo` 本身包含公开仓库，所以取数优先用高档 token。
  */
-const SCOPES: Record<Tier, string> = { public: "public_repo", private: "repo" };
+export const SCOPES: Record<Tier, string> = { public: "public_repo", private: "repo" };
 
 export function isTier(value: string | null): value is Tier {
   return value === "public" || value === "private";

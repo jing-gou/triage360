@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
-import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier } from "./github-oauth";
+import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier, SCOPES } from "./github-oauth";
 import type { EncryptedStore, Tier } from "./store";
 
 /**
@@ -15,7 +15,7 @@ const STATE_TTL_MS = 10 * 60_000;
 const MAX_BODY_CHARS = 16_384;
 
 /** 各档授权「本该」拿到的 scope；和实际授予的一比，就能指出 GitHub 侧被改小（T12）。 */
-const EXPECTED_SCOPES: Record<Tier, string[]> = { public: ["public_repo"], private: ["repo"] };
+const EXPECTED_SCOPES: Record<Tier, string[]> = { public: [SCOPES.public], private: [SCOPES.private] };
 
 interface PendingAuth {
   expiresAt: number;
@@ -48,7 +48,7 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
     try {
       if (req.method === "OPTIONS") {
         res.setHeader("Access-Control-Allow-Methods", "GET, POST");
-        res.setHeader("Access-Control-Allow-Headers", "Authorization");
+        res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
         res.setHeader("Access-Control-Max-Age", "600");
         return end(res, 204);
       }
@@ -140,9 +140,9 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
       });
       try {
         const list = await createGithubProvider().search({ assignee: tenant.login }, http);
-        if (liveScopes !== null && !sameScopes(grant.scopes, liveScopes)) {
-          grant.scopes = liveScopes;
+        if (liveScopes !== null) {
           store.setScopes(id, tier, liveScopes);
+          grant.scopes = liveScopes;
         }
         res.setHeader("Cache-Control", "no-store");
         return json(res, 200, {
@@ -160,7 +160,7 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
     }
 
     // 两档都不可用：整条租户删掉，让面板回到「重新连接」而不是留一条死记录。
-    store.delete(id);
+    if (!store.delete(id)) console.error("[items] delete verification failed");
     return json(res, 401, { error: "reconnect" });
   }
 }
@@ -172,10 +172,6 @@ function scopesOf(tenant: { grants: Partial<Record<Tier, { scopes: string[] }>> 
     if (grant !== undefined) out[tier] = { scopes: [...grant.scopes] };
   }
   return out;
-}
-
-function sameScopes(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((one, index) => one === b[index]);
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {

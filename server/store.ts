@@ -74,7 +74,8 @@ export class EncryptedStore {
 
   /**
    * 把一档授权落到租户上：`sessionId` 为空就新建租户（首次连接），
-   * 非空就合并进已有记录（同一访客的第二档授权）。返回最终会话标识。
+   * 非空就合并进已有记录（同一访客的第二档授权）。会话在途期间被撤销就拒绝落盘，
+   * 不凭一个已经作废的标识重建出新租户。返回最终会话标识。
    */
   attachGrant(
     sessionId: string | null,
@@ -83,7 +84,10 @@ export class EncryptedStore {
     login: string,
     now: number,
   ): string {
-    const id = sessionId !== null && this.find(sessionId) !== undefined ? sessionId : this.createTenant(login, now);
+    if (sessionId !== null && this.find(sessionId) === undefined) {
+      throw new Error("授权会话已失效");
+    }
+    const id = sessionId ?? this.createTenant(login, now);
     const tenant = this.tenantRecord(id);
     if (tenant === undefined) throw new Error("租户记录在写入前消失");
     tenant.login = login;
@@ -110,13 +114,13 @@ export class EncryptedStore {
     return this.materialize(record, sessionId);
   }
 
-  /** 一档授权被上游判定失效：只删这一档；租户没有剩余授权时才整条删除。 */
+  /** 一档授权被上游判定失效：只删这一档；租户没有剩余授权时整条删除（同样要求验证通过）。 */
   removeGrant(sessionId: string, tier: Tier): void {
     const record = this.tenantRecord(sessionId);
     if (record === undefined) return;
     delete record.grants[tier];
     if (Object.keys(record.grants).length === 0) {
-      this.dropTenant(sessionId);
+      if (!this.delete(sessionId)) throw new Error("删除验证失败");
     } else {
       this.persist();
     }

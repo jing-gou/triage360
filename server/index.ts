@@ -5,9 +5,13 @@ import { EncryptedStore } from "./store";
 
 const config = loadConfig(process.env);
 const store = new EncryptedStore(config.dataDir, () => Date.now());
-// 启动时先扫一遍 30 天未访问的租户：重启即执行，不依赖有人来访问。
-const pruned = store.prune(Date.now());
-if (pruned > 0) console.log(`[store] pruned ${pruned} inactive tenant(s)`);
+// 启动先扫一遍，之后每小时再扫：30 天清除不能只靠「有人来访问」触发——没流量的租户照样要到期消失。
+function sweep(): void {
+  const removed = store.prune(Date.now());
+  if (removed > 0) console.log(`[store] pruned ${removed} inactive tenant(s)`);
+}
+sweep();
+setInterval(sweep, 60 * 60_000).unref();
 const handler = createHandler({ config, store, now: () => Date.now() });
 
 const server = createServer((req, res) => {
