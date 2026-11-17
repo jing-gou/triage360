@@ -32,13 +32,13 @@ function record(taskId: string, at: string, position: number, group = TRIAGE): P
   return { providerId: "github", taskId, group, at, position };
 }
 
-function deps(orderHistory: readonly PlacementRecord[]) {
+function deps(placements: readonly PlacementRecord[]) {
   return {
     providers: [createGithubLikeProvider(), createGiteeLikeProvider()],
     http: fakeHttp(VIEW),
     now: clock,
     scope,
-    orderHistory,
+    placements,
   };
 }
 
@@ -134,7 +134,7 @@ describe("seam 1 · 加权的门槛", () => {
 
 describe("seam 1 · 加权不跨档，分组认的是来源而不是平台", () => {
   /** 900 与 941 同在 github 这一家，但分属两个仓库：分组键取的是 URL 里的 `owner/repo`。 */
-  function crossTierDeps(orderHistory: readonly PlacementRecord[]) {
+  function crossTierDeps(placements: readonly PlacementRecord[]) {
     return {
       providers: [createGithubLikeProvider(), createGiteeLikeProvider()],
       http: fakeHttp({
@@ -148,7 +148,7 @@ describe("seam 1 · 加权不跨档，分组认的是来源而不是平台", () 
       }),
       now: clock,
       scope,
-      orderHistory,
+      placements,
     };
   }
 
@@ -202,7 +202,7 @@ describe("seam 1 · 来源分组键的两种回落", () => {
       now: clock,
       scope,
       // 记录里那两个 id 这一轮都不在清单上：分组存下来了，所以照旧数得着。
-      orderHistory: [record("jira:100BR-9", "2026-11-16T10:00:00.000Z", 0, JIRA_SITE), record("jira:100BR-8", "2026-11-15T10:00:00.000Z", 1, JIRA_SITE)],
+      placements: [record("jira:100BR-9", "2026-11-16T10:00:00.000Z", 0, JIRA_SITE), record("jira:100BR-8", "2026-11-15T10:00:00.000Z", 1, JIRA_SITE)],
     });
 
     expect(list.entries.map((entry) => [entry.task.id, entry.learned])).toEqual([
@@ -218,7 +218,7 @@ describe("seam 1 · 来源分组键的两种回落", () => {
       http: fakeHttp({ github: { view: [{ ...gh(943, "源站给了相对地址", "2026-11-16T10:00:00Z"), html_url: "/issues/943" }] } }),
       now: clock,
       scope,
-      orderHistory: [record("github:901", "2026-11-16T10:00:00.000Z", 0, "github"), record("github:902", "2026-11-15T10:00:00.000Z", 1, "github")],
+      placements: [record("github:901", "2026-11-16T10:00:00.000Z", 0, "github"), record("github:902", "2026-11-15T10:00:00.000Z", 1, "github")],
     });
 
     expect(list.entries.map((entry) => [entry.task.id, entry.learned])).toEqual([

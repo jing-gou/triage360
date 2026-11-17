@@ -58,7 +58,7 @@ export function App() {
       sameEvent: demoSameEvent,
       // 上一轮排的顺序与往期放置都回到构建器：存储归界面管，构建器只认注入（ADR-0007、ADR-0009）。
       manualOrder: loadManualOrder(),
-      orderHistory: loadLearningRecords(),
+      placements: loadLearningRecords(),
     }).then((next) => {
       if (alive) setList(next);
     });
@@ -78,7 +78,8 @@ export function App() {
     if (moved === undefined) return;
     const rest = list.entries.filter((_, index) => index !== from);
     rest.splice(to, 0, moved);
-    setList({ ...list, entries: rest });
+    // 落盘的是整份可见顺序 ⇒ 这些卡从这一次起都归手动区，命中标记一并去掉，与下一次刷新看到的一致（ADR-0009）。
+    setList({ ...list, entries: rest.map(({ learned, ...entry }) => entry) });
     saveManualOrder(rest.map((entry) => entry.task.id));
     // 分组键当场算下来存：这一轮之后那条任务可能从清单上消失（关掉、转派），届时没人能重算它属于哪个来源。
     appendLearningRecord({

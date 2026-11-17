@@ -37,7 +37,7 @@ export interface TodayListDeps {
    * 和 `manualOrder` 同一个理由——构建器不自己读浏览器存储，否则同一份输入在 CI 与访客浏览器里会排成两种顺序。
    * 省略或空数组即完全没有学习这回事，输出回到 ADR-0005 的档内序。
    */
-  orderHistory?: readonly PlacementRecord[];
+  placements?: readonly PlacementRecord[];
 }
 
 export interface TodayList {
@@ -101,14 +101,14 @@ export async function buildTodayList({
   zoneOffsetMinutes,
   sameEvent,
   manualOrder,
-  orderHistory = [],
+  placements = [],
 }: TodayListDeps): Promise<TodayList> {
   const batches = await Promise.all(providers.map((provider) => buildOne(provider, http, scope, previous)));
 
   // 打分（T04）先按规则分堆，堆内按最近有动静排。
   // normalize 已把各家时间统一成 UTC，字符串比较才成立；时钟只取一次，同一轮里不许变。
   const instant = now().toISOString();
-  const boost = hitsByGroup(orderHistory, instant);
+  const boost = hitsByGroup(placements, instant);
   const entries: ListEntry[] = batches
     .flat()
     .map((task) => {
