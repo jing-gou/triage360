@@ -119,6 +119,7 @@ body {
 
 .card--overdue .card-reason {
   color: var(--alert);
+  font-weight: 500;
 }
 
 .card--dueToday .card-reason {
