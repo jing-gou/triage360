@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
-import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier, SCOPES } from "./github-oauth";
+import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier, missingScopes, SCOPES } from "./github-oauth";
 import type { EncryptedStore, Tier } from "./store";
 
 /**
@@ -165,11 +165,13 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
   }
 }
 
-function scopesOf(tenant: { grants: Partial<Record<Tier, { scopes: string[] }>> }): Partial<Record<Tier, { scopes: string[] }>> {
-  const out: Partial<Record<Tier, { scopes: string[] }>> = {};
+function scopesOf(tenant: { grants: Partial<Record<Tier, { scopes: string[] }>> }): Partial<
+  Record<Tier, { scopes: string[]; missing: string[] }>
+> {
+  const out: Partial<Record<Tier, { scopes: string[]; missing: string[] }>> = {};
   for (const tier of ["public", "private"] as const) {
     const grant = tenant.grants[tier];
-    if (grant !== undefined) out[tier] = { scopes: [...grant.scopes] };
+    if (grant !== undefined) out[tier] = { scopes: [...grant.scopes], missing: missingScopes(EXPECTED_SCOPES[tier], grant.scopes) };
   }
   return out;
 }

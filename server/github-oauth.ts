@@ -20,6 +20,14 @@ const TOKEN_URL = "https://github.com/login/oauth/access_token";
  */
 export const SCOPES: Record<Tier, string> = { public: "public_repo", private: "repo" };
 
+/**
+ * 实际授予是否覆盖这一档应有的 scope；返回缺的那些。
+ * `repo` 是 `public_repo` 的超集，所以公开档拿到 `repo` 不算被缩小，其余按字面比。
+ */
+export function missingScopes(expected: readonly string[], actual: readonly string[]): string[] {
+  return expected.filter((one) => !actual.includes(one) && !(one === SCOPES.public && actual.includes(SCOPES.private)));
+}
+
 export function isTier(value: string | null): value is Tier {
   return value === "public" || value === "private";
 }
