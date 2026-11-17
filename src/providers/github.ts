@@ -1,4 +1,4 @@
-import { dueFrom, makeTaskId, remoteIdOf, type Provider, type RawItem, type Task } from "../core/provider";
+import { dueFrom, makeTaskId, remoteIdOf, tieredAuth, type Provider, type RawItem, type Task, type Tier } from "../core/provider";
 
 /**
  * 真实 GitHub provider（T09）：请求形状与 GitLab/Gitee 的差异全在这里消化。
@@ -46,6 +46,12 @@ export class GithubUpstreamError extends Error {
     this.name = "GithubUpstreamError";
   }
 }
+
+/** 公私两档的档位与措辞：假 provider 也认这一份，两处不各写一遍。 */
+export const GITHUB_TIERS: readonly { readonly tier: Tier; readonly label: string }[] = [
+  { tier: "public", label: "只读公开仓库" },
+  { tier: "private", label: "包含私有仓库" },
+];
 
 export function createGithubProvider(): Provider {
   return {
@@ -100,16 +106,7 @@ export function createGithubProvider(): Provider {
     },
 
     scopeDescriptor(scope) {
-      return {
-        range: `指派给 ${scope.assignee}`,
-        auth: {
-          kind: "tiered",
-          tiers: [
-            { tier: "public", label: "只读公开仓库" },
-            { tier: "private", label: "包含私有仓库" },
-          ],
-        },
-      };
+      return tieredAuth(`指派给 ${scope.assignee}`, GITHUB_TIERS);
     },
   };
 }

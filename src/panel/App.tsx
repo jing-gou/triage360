@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { AuthTier, Provider, Scope } from "../core/provider";
+import type { Provider, Scope, Tier } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
 import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
@@ -21,8 +21,13 @@ import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrd
 
 const scope: Scope = { assignee: "me" };
 const sampleProviders: Provider[] = createSampleProviders();
-/** 授权档位弹层的平台清单：GitHub 用真 provider 的两档，其余用样例 provider 的粒度说明。 */
-const authProviders: Provider[] = [createGithubProvider(), ...sampleProviders.filter((one) => one.id !== "github")];
+/** 真接入的平台；样例里 id 相同的让位，弹层里同一平台只出现一次。 */
+const wiredProviders: Provider[] = [createGithubProvider()];
+/** 授权档位弹层的平台清单：真接入的在前，其余用样例 provider 的粒度说明。 */
+const authProviders: Provider[] = [
+  ...wiredProviders,
+  ...sampleProviders.filter((one) => !wiredProviders.some((wired) => wired.id === one.id)),
+];
 const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
 /**
@@ -203,7 +208,7 @@ export function App() {
   }
 
   /** 某一档（或原授权被改小后重来）：服务端把这次授权挂回同一租户，返回 GitHub 授权页。 */
-  async function authorizeTier(tier: AuthTier): Promise<void> {
+  async function authorizeTier(tier: Tier): Promise<void> {
     const session = adoptSessionFromUrl();
     if (session === null) {
       setDialogError("这台浏览器里没有会话记录，先连接 GitHub 再来。");
@@ -233,6 +238,9 @@ export function App() {
   // GitHub 侧把某一档授权改小时，角标当场标出来：缺的 scope 不藏在弹层里（T12 AC#3）。
   const scopeGap =
     auth !== null && Object.values(auth.grants).some((grant) => grant !== undefined && grant.missing.length > 0);
+  // 本轮取数里被 401 摘掉的档更急：私有条目已经少了几条，角标先说这个。
+  const authNote =
+    auth === null ? null : auth.dropped.length > 0 ? "授权已失效" : scopeGap ? "实际授权已缩小" : null;
 
   return (
     <main className="panel">
@@ -346,7 +354,7 @@ export function App() {
         {live && (
           <>
             <button className="corner-link" onClick={() => openDialog("tiers")} type="button">
-              {scopeGap ? "授权档位 · 实际授权已缩小" : "授权档位"}
+              {authNote === null ? "授权档位" : `授权档位 · ${authNote}`}
             </button>
             {" · "}
           </>
@@ -393,7 +401,7 @@ export function App() {
       {dialog === "consent" && (
         <Modal title="连接 GitHub 之前" onDismiss={() => setDialog(null)}>
           <p className="notice-body">
-            同意后跳到 GitHub 的授权页面。服务端会存：你的 GitHub 登录名、加密后的 access token、这次授权是哪一档、GitHub 实际授予的 scope、以及这条记录的创建与最近访问时间。
+            同意后跳到 GitHub 的授权页面。服务端会存：你的 GitHub 登录名、加密后的各档 access token、这次授权是哪一档、GitHub 实际授予的 scope、以及这条记录的创建与最近访问时间。
             连上之后，右下角的「授权档位」可以再单独授权私有仓库——那是第二次授权，两个 token 分开存。
           </p>
           <p className="notice-body">
@@ -406,7 +414,7 @@ export function App() {
             token 加密落盘：数据库文件泄露不导致凭据泄露。但这挡不住服务器被完全控制——进程运行时手里有密钥。
           </p>
           <p className="notice-body">
-            怎么清：右下角的「撤销授权」会在服务端物理删除这枚 token 和这条记录，删除后当场验证；连续
+            怎么清：右下角的「撤销授权」会在服务端物理删除两档令牌和这条记录，删除后当场验证；连续
             30 天未访问也会自动清除。
           </p>
           <p className="notice-body">
@@ -433,7 +441,10 @@ export function App() {
       {dialog === "revoke" && (
         <Modal title="撤销授权" onDismiss={() => { if (!dialogBusy) setDialog(null); }}>
           <p className="notice-body">
-            会在服务端物理删除这条记录：加密的令牌、GitHub 登录名与这条租户的全部数据，删除后当场验证。之后面板回到样例清单，随时可以重新连接。
+            会在服务端物理删除这条记录：加密的令牌（两档各一枚）、GitHub 登录名与这条租户的全部数据，删除后当场验证。之后面板回到样例清单，随时可以重新连接。
+          </p>
+          <p className="notice-body">
+            只关掉私有仓库、保留公开档：到 GitHub 的已授权应用页把这一档的 scope 调小，回来刷新即可——面板会如实标出差异。
           </p>
           <p className="notice-body">
             这台浏览器里的手动顺序与放置记录不受影响——要清它们，用「清除本地记录」。
@@ -477,7 +488,9 @@ export function App() {
           </p>
           {authProviders.map((provider) => {
             const descriptor = provider.scopeDescriptor(scope);
-            const providerLabel = SOURCE_LABELS[provider.id]?.label ?? provider.id;
+            const source = sourceLabel(provider.id, live);
+            // 弹层同样受真实程度表约束：样例平台的档位说明也要带上限定词。
+            const providerLabel = source.sample === undefined ? source.label : `${source.label} 样例`;
             if (descriptor.auth.kind === "uniform") {
               return (
                 <p className="notice-body" key={provider.id}>
@@ -490,12 +503,18 @@ export function App() {
                 <p className="tier-group-title">{providerLabel}</p>
                 {descriptor.auth.tiers.map(({ tier, label }) => {
                   const grant = auth?.grants[tier];
+                  const dropped = auth?.dropped.includes(tier) ?? false;
                   return (
                     <div className="tier-row" key={tier}>
                       <div className="tier-body">
                         <span className="tier-name">{label}</span>
                         <span className="tier-scope">{grant === undefined ? "未授权" : grantLine(grant)}</span>
-                        {grant !== undefined && grant.missing.length > 0 && (
+                        {dropped && (
+                          <span className="tier-warn">
+                            这一档刚被 GitHub 拒绝（401），已从服务端删除；重新授权即可。
+                          </span>
+                        )}
+                        {!dropped && grant !== undefined && grant.missing.length > 0 && (
                           <span className="tier-warn">
                             GitHub 实际授予比这一档应有的少：缺 {grant.missing.join("、")}。到 GitHub
                             授权页调整后点「重新授权」。
@@ -519,9 +538,6 @@ export function App() {
           <p className="notice-body">
             这一屏的顺序和放置记录存在浏览器里，与授权无关；撤销授权不会清它们。
           </p>
-          <p className="notice-body">
-            只想关掉私有仓库访问：到 GitHub 的已授权应用页把这一档的 scope 调小，回来刷新即可——这里会如实显示。
-          </p>
           {dialogError !== null && <p className="notice-error">{dialogError}</p>}
           <div className="notice-actions">
             <button className="notice-secondary" disabled={dialogBusy} onClick={() => setDialog(null)} type="button">
@@ -534,9 +550,10 @@ export function App() {
   );
 }
 
-/** 弹层里一行「实际授予」：空数组也是真值（有响应头但没列 scope），不吞掉。 */
+/** 弹层里一行「实际授予」：`null` 是响应头缺失（不知道），空数组是「有头但没列 scope」，两种都是真值，不吞掉。 */
 function grantLine(grant: TierGrant): string {
-  return grant.scopes.length === 0 ? "已授权 · GitHub 未报告 scope" : `已授权 · ${grant.scopes.join(" ")}`;
+  if (grant.scopes === null) return "已授权 · GitHub 未报告 scope";
+  return grant.scopes.length === 0 ? "已授权 · 未授予任何 scope" : `已授权 · ${grant.scopes.join(" ")}`;
 }
 
 /** 四个弹层共用的一层壳：遮罩点掉即退，点内容不冒泡；标题与关闭都只有一份写法。 */

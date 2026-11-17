@@ -1,6 +1,5 @@
-import type { Http } from "../src/core/provider";
+import type { Http, Tier } from "../src/core/provider";
 import type { ServerConfig } from "./config";
-import type { Tier } from "./store";
 
 /**
  * GitHub OAuth 的一手形状（docs.github.com › Authorizing OAuth apps）：
@@ -77,14 +76,15 @@ function parseScopes(header: string): string[] {
     .filter((one) => one !== "");
 }
 
-/** 换到 token 后再问一次「你是谁」：用户可能在授权页换了账号。顺带取回**实际**授予的 scope。 */
+/** 换到 token 后再问一次「你是谁」：用户可能在授权页换了账号。顺带取回**实际**授予的 scope；响应头缺失时给 `null`。 */
 export async function fetchIdentity(
   accessToken: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ login: string; scopes: string[] }> {
+): Promise<{ login: string; scopes: string[] | null }> {
   const res = await fetchImpl("https://api.github.com/user", { headers: apiHeaders(accessToken) });
   if (!res.ok) throw new Error(`GitHub /user 返回 ${res.status}`);
-  const scopes = parseScopes(res.headers.get("x-oauth-scopes") ?? "");
+  const header = res.headers.get("x-oauth-scopes");
+  const scopes = header === null ? null : parseScopes(header);
   const body = (await res.json()) as { login?: unknown };
   if (typeof body.login !== "string") throw new Error("GitHub /user 没有给出 login");
   return { login: body.login, scopes };

@@ -3,7 +3,7 @@
  * 令牌始终在服务端，这里能拿到的最多是一个不透明的会话标识。
  */
 
-import type { AuthTier } from "../core/provider";
+import type { Tier } from "../core/provider";
 
 const SESSION_KEY = "triage360:session:v1";
 
@@ -33,16 +33,19 @@ export function forgetSession(): void {
 
 /** 服务端观察到的各档实际授权（`X-OAuth-Scopes` 与授权时的真值）。 */
 export interface TierGrant {
-  scopes: string[];
-  /** 这一档应有、实际没拿到的 scope；非空就是 GitHub 侧把授权改小了（T12）。 */
+  /** `null` = 响应头缺失、实际授予未知；空数组才是「有头但没列 scope」。 */
+  scopes: string[] | null;
+  /** 这一档应有、实际没拿到的 scope；非空就是 GitHub 侧把授权改小了（T12）。未知时不报。 */
   missing: string[];
 }
 
 export interface GithubAuth {
-  grants: Partial<Record<AuthTier, TierGrant>>;
+  grants: Partial<Record<Tier, TierGrant>>;
   /** 这一轮取数实际用了哪一档。 */
-  used: AuthTier;
-  expected: Record<AuthTier, string[]>;
+  used: Tier;
+  expected: Record<Tier, string[]>;
+  /** 这一轮取数里被 GitHub 判 401、已从服务端删掉的档。 */
+  dropped: Tier[];
 }
 
 export interface GithubItems {
@@ -59,7 +62,7 @@ export async function fetchGithubItems(base: string, session: string): Promise<G
 }
 
 /** 第二档（或重新）授权：服务端把这次授权挂回已有租户，返回 GitHub 授权页地址。 */
-export async function requestAuthUrl(base: string, session: string, tier: AuthTier): Promise<string> {
+export async function requestAuthUrl(base: string, session: string, tier: Tier): Promise<string> {
   const res = await fetch(`${base}/api/auth-url`, {
     method: "POST",
     headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },

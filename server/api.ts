@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Tier } from "../src/core/provider";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
 import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier, missingScopes, SCOPES } from "./github-oauth";
-import type { EncryptedStore, Tier } from "./store";
+import type { EncryptedStore } from "./store";
 
 /**
  * OAuth 回调 handler 与 HTTP 细节按 spec 的 Testing Decisions 不写自动化测试
@@ -112,6 +113,12 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
     }
     const grant = await exchangeCode(config, code);
     const identity = await fetchIdentity(grant.accessToken);
+    // 两档 token 必须属于同一个账号：第二档换了账号就拒绝，不把两枚 token 混进一条租户。
+    const existing = pending.sessionId === null ? undefined : store.find(pending.sessionId);
+    if (existing !== undefined && existing.login !== identity.login) {
+      console.warn("[cb/github] rejected: account mismatch");
+      return text(res, 400, "这次授权的 GitHub 账号与已连接的账号不同，换回原账号再试。");
+    }
     const id = store.attachGrant(
       pending.sessionId,
       pending.tier,
@@ -130,7 +137,9 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
     if (id === null || tenant === undefined) return json(res, 401, { error: "unauthenticated" });
 
     // 高档 token 是公开档的超集，优先用它；某一档被上游判 401 就只删那一档再试另一档。
+    // 被删的档记进 `dropped`：主屏角标要能说出「刚刚丢了哪一档」，而不是静默少几条。
     const order: Tier[] = tenant.grants.private !== undefined ? ["private", "public"] : ["public"];
+    const dropped: Tier[] = [];
     for (const tier of order) {
       const grant = tenant.grants[tier];
       if (grant === undefined) continue;
@@ -148,11 +157,14 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
         return json(res, 200, {
           items: list,
           login: tenant.login,
-          auth: { grants: scopesOf(tenant), used: tier, expected: EXPECTED_SCOPES },
+          auth: { grants: scopesOf(tenant), used: tier, expected: EXPECTED_SCOPES, dropped },
         });
       } catch (error) {
         if (error instanceof GithubUpstreamError && error.status === 401) {
           store.removeGrant(id, tier);
+          // 租户是 materialize 出来的副本：不删这一份，响应里还会把它当已授权报回去。
+          delete tenant.grants[tier];
+          dropped.push(tier);
           continue;
         }
         throw error;
@@ -165,13 +177,19 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
   }
 }
 
-function scopesOf(tenant: { grants: Partial<Record<Tier, { scopes: string[] }>> }): Partial<
-  Record<Tier, { scopes: string[]; missing: string[] }>
+function scopesOf(tenant: { grants: Partial<Record<Tier, { scopes: string[] | null }>> }): Partial<
+  Record<Tier, { scopes: string[] | null; missing: string[] }>
 > {
-  const out: Partial<Record<Tier, { scopes: string[]; missing: string[] }>> = {};
+  const out: Partial<Record<Tier, { scopes: string[] | null; missing: string[] }>> = {};
   for (const tier of ["public", "private"] as const) {
     const grant = tenant.grants[tier];
-    if (grant !== undefined) out[tier] = { scopes: [...grant.scopes], missing: missingScopes(EXPECTED_SCOPES[tier], grant.scopes) };
+    if (grant === undefined) continue;
+    const scopes = grant.scopes === null ? null : [...grant.scopes];
+    out[tier] = {
+      scopes,
+      // 响应头缺失时不知道实际授予了什么，就不报差异：宁可不猜，也不把「不知道」说成「少了」。
+      missing: scopes === null ? [] : missingScopes(EXPECTED_SCOPES[tier], scopes),
+    };
   }
   return out;
 }
