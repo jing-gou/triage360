@@ -25,6 +25,8 @@ related: [super-productivity-ordering-storage.md, browser-local-storage-durabili
 >
 > 〔**主会话核对 2026-11-17**〕上面那句「不存在 ADR-0008（本文件也不新建）」在同一支 PR 的下一个 commit `86b6c78` 就被自己推翻了：`docs/adr/0008-manual-order-storage-location.md` 确实建了。「不新建」约束的是这份审计自己的交付物，不是「0008 这个号永久留空」。0008 的状态是 **Proposed**——它只把 §C1–C3 那三处正面义务与两条路摊平，没有替 owner 拍板存放位置。它引用的 `ADR-0007` 与 `src/panel/manual-order.ts` 都还在待批的 PR #31 上，main 上的 `docs/adr/` 因此是 0001–0006 直接跳到 0008。
 >
+> 〔**更新 2026-11-17（同日）**〕上面那段写于 0008 还是 Proposed 的时候。owner 当天选了 **A 支**，0008 已定稿为 **Accepted**：顺序只住浏览器本地，§C1 那两句冲突按「#13/#10 的删除义务射程限服务端」解，§C3 那句「虚假承诺」风险由文案承担。PR #31 当时仍 OPEN，所以本笔记上面列的那些「不在 main 上」依然成立——0008 的「依赖」一节记着同一件事。§C1 表里那三项票面/PRD 改动**没有因为选定方向而自动获得授权**，逐项状态见 0008 的「A 支欠的动作」。
+>
 > 〔**读法与两处不可复现**〕本文件不做决策，只把现状摊开；冲突点（§3 的 C1–C6）的严重度是取证者判的，不是仓库已认的。另外 `.gitignore:10` 忽略了 `.scratch/`，所以本文件对 `.scratch/pr-body-t07.md` 的四段引用（`:22`、`:29-30`、`:49`、`:52`）**在合并后无法复现**——它们是 T07 那份 PR 正文的草稿。同一内容的持久副本在 tracker 上，配方：`export HTTPS_PROXY=http://localhost:7890 && "C:/Program Files/GitHub CLI/gh.exe" pr view 31 --repo jing-gou/triage360 --json body -q .body`。这条替 §待核实 3 与 5 里以 `.scratch/` 为证据的那两句配方说话。
 
 ## 结论摘要（TL;DR）
