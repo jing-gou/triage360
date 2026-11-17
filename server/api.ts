@@ -24,7 +24,6 @@ export function createHandler({ config, sessions, now }: HandlerDeps): (req: Inc
 
   return async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", config.frontendUrl);
-    res.setHeader("Vary", "Origin");
     const url = new URL(req.url ?? "/", config.appBaseUrl);
 
     try {
@@ -85,7 +84,7 @@ export function createHandler({ config, sessions, now }: HandlerDeps): (req: Inc
   async function items(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const id = bearerOf(req);
     const session = id === null ? undefined : sessions.get(id);
-    if (session === undefined) return json(res, 401, { error: "unauthenticated" });
+    if (id === null || session === undefined) return json(res, 401, { error: "unauthenticated" });
     try {
       const list = await createGithubProvider().search(
         { assignee: session.login },
@@ -95,7 +94,7 @@ export function createHandler({ config, sessions, now }: HandlerDeps): (req: Inc
       return json(res, 200, { items: list, login: session.login });
     } catch (error) {
       if (error instanceof GithubUpstreamError && error.status === 401) {
-        if (id !== null) sessions.delete(id);
+        sessions.delete(id);
         return json(res, 401, { error: "reconnect" });
       }
       throw error;

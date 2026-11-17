@@ -27,7 +27,6 @@ export function authorizeUrl(config: ServerConfig, state: string): string {
 
 export interface TokenGrant {
   accessToken: string;
-  scope: string;
 }
 
 export async function exchangeCode(
@@ -46,12 +45,12 @@ export async function exchangeCode(
     }).toString(),
   });
   if (!res.ok) throw new Error(`GitHub 换 token 返回 ${res.status}`);
-  const body = (await res.json()) as { access_token?: unknown; scope?: unknown; error?: unknown };
+  const body = (await res.json()) as { access_token?: unknown; error?: unknown };
   if (typeof body.access_token !== "string") {
     const reason = typeof body.error === "string" ? `：${body.error}` : "";
     throw new Error(`GitHub 没有给出 access_token${reason}`);
   }
-  return { accessToken: body.access_token, scope: typeof body.scope === "string" ? body.scope : "" };
+  return { accessToken: body.access_token };
 }
 
 /** 换到 token 后再问一次「你是谁」：用户可能在授权页换了账号。 */
