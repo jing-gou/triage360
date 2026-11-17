@@ -1,4 +1,4 @@
-import { dueFrom, makeTaskId, remoteIdOf, tieredAuth, type Provider, type RawItem, type Task, type Tier } from "../core/provider";
+import { dueFrom, makeTaskId, remoteIdOf, tieredAuth, type Provider, type RawItem, type Task, type TierChoice } from "../core/provider";
 
 /**
  * 真实 GitHub provider（T09）：请求形状与 GitLab/Gitee 的差异全在这里消化。
@@ -48,7 +48,7 @@ export class GithubUpstreamError extends Error {
 }
 
 /** 公私两档的档位与措辞：假 provider 也认这一份，两处不各写一遍。 */
-export const GITHUB_TIERS: readonly { readonly tier: Tier; readonly label: string }[] = [
+export const GITHUB_TIERS: readonly TierChoice[] = [
   { tier: "public", label: "只读公开仓库" },
   { tier: "private", label: "包含私有仓库" },
 ];

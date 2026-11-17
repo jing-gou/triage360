@@ -92,17 +92,18 @@ export async function fetchIdentity(
 
 /**
  * 交给 provider 的取数通道：每个请求都带上这个会话的令牌，令牌不出服务端。
- * `onScopes` 让调用方顺路观察 `X-OAuth-Scopes`：授权在 GitHub 侧被改小时，下一次取数就能看见。
+ * `onScopes` 让调用方顺路观察 `X-OAuth-Scopes`：授权在 GitHub 侧被改小时，下一次取数就能看见；
+ * 头缺失时回调 `null`，让「不知道」覆盖旧值，而不是让过期 scope 冒充当下真值。
  */
 export function createGithubHttp(
   accessToken: string,
   fetchImpl: typeof fetch = fetch,
-  onScopes?: (scopes: string[]) => void,
+  onScopes?: (scopes: string[] | null) => void,
 ): Http {
   return async (url) => {
     const res = await fetchImpl(url, { headers: apiHeaders(accessToken) });
     const scopesHeader = res.headers.get("x-oauth-scopes");
-    if (onScopes !== undefined && scopesHeader !== null) onScopes(parseScopes(scopesHeader));
+    if (onScopes !== undefined) onScopes(scopesHeader === null ? null : parseScopes(scopesHeader));
     const body: unknown = await res.json().catch(() => null);
     return { status: res.status, headers: Object.fromEntries(res.headers), body };
   };

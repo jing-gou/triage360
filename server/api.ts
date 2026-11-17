@@ -143,13 +143,16 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
     for (const tier of order) {
       const grant = tenant.grants[tier];
       if (grant === undefined) continue;
+      // 头拿到（哪怕是空的、乃至缺失回调的 null）就覆盖旧值；`scopesObserved` 区分「这轮没回调」。
+      let scopesObserved = false;
       let liveScopes: string[] | null = null;
       const http = createGithubHttp(grant.token, fetch, (scopes) => {
+        scopesObserved = true;
         liveScopes = scopes;
       });
       try {
         const list = await createGithubProvider().search({ assignee: tenant.login }, http);
-        if (liveScopes !== null) {
+        if (scopesObserved) {
           store.setScopes(id, tier, liveScopes);
           grant.scopes = liveScopes;
         }

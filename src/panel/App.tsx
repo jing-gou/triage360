@@ -41,10 +41,10 @@ const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
   feishu: { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
 };
 
-/** 接上真实会话时 GitHub 不再是样例；其余几家原样保留。 */
+/** 接上真实会话时真接入的平台不再标样例；其余几家原样保留。 */
 function sourceLabel(providerId: string, live: boolean): { label: string; sample?: string } {
   const base = SOURCE_LABELS[providerId] ?? { label: providerId };
-  return live && providerId === "github" ? { label: base.label } : base;
+  return live && wiredProviders.some((one) => one.id === providerId) ? { label: base.label } : base;
 }
 
 /**
@@ -100,7 +100,7 @@ export function App() {
         try {
           const payload = await fetchGithubItems(API_BASE, session);
           const next = await buildTodayList({
-            providers: [createGithubProvider()],
+            providers: wiredProviders,
             // 条目已经从服务端取回，这一次取数不再出发请求；归一与排序仍在本机走 seam 1。
             http: async () => ({ status: 200, headers: {}, body: { items: payload.items } }),
             now: () => new Date(),
@@ -328,7 +328,7 @@ export function App() {
         失效时说「重新连接」而不是把整屏换成错误信息。
       */}
       <p className="corner">
-        {(live ? [createGithubProvider()] : sampleProviders)
+        {(live ? wiredProviders : sampleProviders)
           .map((provider) => {
             const source = sourceLabel(provider.id, live);
             return source.sample ? `${source.label} 样例` : source.label;

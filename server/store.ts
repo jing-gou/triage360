@@ -132,13 +132,13 @@ export class EncryptedStore {
     return true;
   }
 
-  /** 上游响应头给出的实际 scope 变了就更新（GitHub 侧被改小时，这里是最早的观测点）。 */
-  setScopes(sessionId: string, tier: Tier, scopes: string[]): void {
+  /** 上游响应头给出的实际 scope 变了就更新（GitHub 侧被改小时，这里是最早的观测点）；头缺失（`null`）也如实覆盖旧值。 */
+  setScopes(sessionId: string, tier: Tier, scopes: string[] | null): void {
     const record = this.tenantRecord(sessionId);
     const stored = record?.grants[tier];
     if (stored === undefined) return;
-    if (stored.scopes !== null && stored.scopes.length === scopes.length && stored.scopes.every((one, index) => one === scopes[index])) return;
-    stored.scopes = [...scopes];
+    if (sameScopes(stored.scopes, scopes)) return;
+    stored.scopes = scopes === null ? null : [...scopes];
     this.persist();
   }
 
@@ -196,6 +196,11 @@ export class EncryptedStore {
 
 function newId(): string {
   return randomBytes(32).toString("base64url");
+}
+
+function sameScopes(a: string[] | null, b: string[] | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.length === b.length && a.every((one, index) => one === b[index]);
 }
 
 function hashId(id: string): string {

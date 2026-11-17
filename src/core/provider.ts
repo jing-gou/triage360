@@ -79,12 +79,18 @@ export interface Provider {
 /** 授权档：同一平台内按公开/私有拆开的粒度。 */
 export type Tier = "public" | "private";
 
+/** 一档在界面上的名字：档位标识与标签由平台给。 */
+export interface TierChoice {
+  readonly tier: Tier;
+  readonly label: string;
+}
+
 /**
  * 授权粒度：`tiered` 是可按档分别授权（GitHub），`uniform` 是平台侧没有这个维度。
  * `uniform.note` 直接给界面读，避免差异散落进每个 `if`。
  */
 export type AuthGranularity =
-  | { readonly kind: "tiered"; readonly tiers: readonly { readonly tier: Tier; readonly label: string }[] }
+  | { readonly kind: "tiered"; readonly tiers: readonly TierChoice[] }
   | { readonly kind: "uniform"; readonly note: string };
 
 export interface ScopeDescriptor {
@@ -99,7 +105,7 @@ export function uniformAuth(range: string): ScopeDescriptor {
 }
 
 /** 可按档授权的平台的描述：档位与标签由平台给，怎么铺开由界面按档渲染。 */
-export function tieredAuth(range: string, tiers: readonly { readonly tier: Tier; readonly label: string }[]): ScopeDescriptor {
+export function tieredAuth(range: string, tiers: readonly TierChoice[]): ScopeDescriptor {
   return { range, auth: { kind: "tiered", tiers } };
 }
 
