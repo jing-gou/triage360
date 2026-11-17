@@ -47,11 +47,13 @@ fi
 mkdir -p "$APP_DIR"
 
 # 2. 代码：这一份检出归部署所有，有本地改动就停下等人看过。
+# 检出归 triage360，脚本以 root 跑：每次显式放行这一份，别去改 root 的全局 git config。
+GIT_SAFE=(-c "safe.directory=$APP_DIR")
 if [ -d "$APP_DIR/.git" ]; then
-  [ -z "$(git -C "$APP_DIR" status --porcelain)" ] || die "$APP_DIR 有未提交改动，先人工确认"
+  [ -z "$(git "${GIT_SAFE[@]}" -C "$APP_DIR" status --porcelain)" ] || die "$APP_DIR 有未提交改动，先人工确认"
   log "更新代码到 origin/$BRANCH"
-  git -C "$APP_DIR" fetch --prune origin "$BRANCH"
-  git -C "$APP_DIR" reset --hard FETCH_HEAD
+  git "${GIT_SAFE[@]}" -C "$APP_DIR" fetch --prune origin "$BRANCH"
+  git "${GIT_SAFE[@]}" -C "$APP_DIR" reset --hard FETCH_HEAD
 else
   log "克隆 $REPO"
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
