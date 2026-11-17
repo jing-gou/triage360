@@ -72,11 +72,14 @@ export function createHandler({ config, sessions, now }: HandlerDeps): (req: Inc
     const expiresAt = pendingStates.get(state);
     pendingStates.delete(state);
     if (expiresAt === undefined || expiresAt < now() || code === "") {
+      // 留痕只说结果，不带 state / code / 身份：journalctl 是排障入口，不是数据出口。
+      console.warn("[cb/github] rejected: state expired, unknown or code missing");
       return text(res, 400, "授权没有走完，回到面板重新连接。");
     }
     const grant = await exchangeCode(config, code);
     const login = await fetchLogin(grant.accessToken);
     const id = sessions.create({ token: grant.accessToken, login, createdAt: now() });
+    console.log("[cb/github] session created");
     // 会话标识放进 fragment：它不进 Referer，也不会被服务端日志记到。
     return redirect(res, `${config.frontendUrl}/#session=${encodeURIComponent(id)}`);
   }
