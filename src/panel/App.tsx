@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Provider, Scope } from "../core/provider";
 import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
-import { createSampleProviders, sampleHttp } from "../fakes/samples";
+import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
 
 const scope: Scope = { assignee: "me" };
 const providers: Provider[] = createSampleProviders();
@@ -36,11 +36,17 @@ export function App() {
     let alive = true;
     // 「今日」按访客日历里的今天判：偏移由界面这一侧喂进来，构建器自己不读宿主时区（ADR-0005）。
     const zoneOffsetMinutes = -new Date().getTimezoneOffset();
-    buildTodayList({ providers, http: sampleHttp, now: () => new Date(), scope, zoneOffsetMinutes }).then(
-      (next) => {
-        if (alive) setList(next);
-      },
-    );
+    buildTodayList({
+      providers,
+      http: sampleHttp,
+      now: () => new Date(),
+      scope,
+      zoneOffsetMinutes,
+      // 演示用判定表：真实判据在 #18，接进来的是同一个注入点，不是另一套逻辑。
+      sameEvent: demoSameEvent,
+    }).then((next) => {
+      if (alive) setList(next);
+    });
     return () => {
       alive = false;
     };
@@ -57,16 +63,36 @@ export function App() {
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
       <ol className="cards">
-        {list.entries.map(({ task, reason }) => {
-          const source = SOURCE_LABELS[task.providerId];
+        {list.entries.map(({ task, reason, mergedFrom }) => {
+          // 合并卡的来源槽一格一个来源，各自跳到各自的记录；没合并的卡片 DOM 不变。
+          const sources = mergedFrom ?? [task];
+          const samples = [
+            ...new Set(sources.map((one) => SOURCE_LABELS[one.providerId]?.sample).filter((one) => one !== undefined)),
+          ];
           return (
             <li className={`card card--${reason}`} key={task.id}>
               <a className="card-title" href={task.url}>
                 {task.title}
               </a>
               <p className="card-meta">
-                <span className="card-source">{source?.label ?? task.providerId}</span>
-                {source?.sample && <span className="card-sample">{source.sample}</span>}
+                {sources.map((one) => {
+                  const source = SOURCE_LABELS[one.providerId];
+                  const label = source?.label ?? one.providerId;
+                  return mergedFrom === undefined ? (
+                    <span className="card-source" key={one.id}>
+                      {label}
+                    </span>
+                  ) : (
+                    <a className="card-source" href={one.url} key={one.id}>
+                      {label}
+                    </a>
+                  );
+                })}
+                {samples.map((sample) => (
+                  <span className="card-sample" key={sample}>
+                    {sample}
+                  </span>
+                ))}
                 <span className="card-reason">{REASON_LABELS[reason]}</span>
                 <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
               </p>
@@ -76,6 +102,7 @@ export function App() {
       </ol>
       {/*
         状态信息只有一个位置：右下角。来源名写在这里，卡片上只写自己那一家。
+        角标列的是本轮接线的家，顺序取注册顺序而不是清单项次：按清单排的话，一家被收敛到零条时它连名字一起消失。
         样例标记也必须出现在这里：某一家本轮被收敛到零条时，卡片全没了，角标是唯一还无条件可见的元素，
         不带限定词就等于宣称这一家已经接通（`docs/PRD.md` 的真实程度表：必须各自标明，不得含糊）。
       */}
