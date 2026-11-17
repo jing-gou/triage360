@@ -140,13 +140,12 @@ function dayOf(instant: string, zoneOffsetMinutes?: number): string {
 }
 
 /**
- * 比较用码元序（UTF-16 code unit），不用 `localeCompare`：id 里带 `:` `#` `/` 与大小写。
- * `localeCompare` 默认按语言环境排序——标点被当可有可无、大小写差异在三级权重上被重新解释，
- * 结果随宿主 locale 变。`byCode` 依赖的是 TS/JS 字符串 `<`，它比的是码元序列而不是码点序列：
- * 纯 ASCII 两者重合，码点落到 BMP 之外（增补平面，比如 emoji）才分家——`"\u{10000}" < "\uFFFF"` 为真，
- * 码点序里 U+10000 > U+FFFF 反过来。id 由 `${providerId}:${remoteId}` 拼成（provider.ts:76-82），
- * 仓库名带 BMP 外字符时两种序给出不同顺序；这里的序只在仓库内比较，没有跨轮语义。
- * 今天这批 ASCII 样本测不出两种序的差别。
+ * 比较用码元序：`<` 比的是 UTF-16 码元序列，结果不随宿主环境变。id 由 `${providerId}:${remoteId}`
+ * 拼成（provider.ts:76-82），里面带 `:` `#` `/` 与大小写，所以破平判据不能是 `localeCompare`——
+ * 它的序是宿主语言环境的函数，门内 CI 与访客浏览器可能排成两种顺序。（这一层在本机没有反例：
+ * `"\u{10000}".localeCompare("\uFFFF")` 与 `<` 同向；不用它是因为序要可复现，不是因为已测出它错。）
+ * 码元序与码点序在 BMP 内重合，出了 BMP 才分家：`"\u{10000}" < "\uFFFF"` 为真（码元 55296 < 65535），
+ * 码点序里 U+10000 > U+FFFF 反过来。今天这批 ASCII 样本两者重合，seam 测试分辨不了这个差别。
  */
 function byCode(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;

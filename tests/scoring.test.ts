@@ -158,9 +158,9 @@ describe("seam 1 · 时钟与确定性", () => {
   });
 
   // 上面那条只在同一家内部破平。T05 之后真正没人管的是跨家并列：四条来源同档同更新时间时，
-  // 谁在前仍然只能由 id 决定，用的序是 `byCode`（UTF-16 码元序；同一语言环境下 localeCompare 也等于它，
-  // 换个 locale 就不一定）。本条只钉「换数组顺序不改输出」：`github:` 与 `jira:` 在这段 ASCII 上
-  // 两种序巧合相同，它分辨不了码位序与 ICU 之争，那件事的边界写在 byCode 注释里。
+  // 谁在前仍然只能由 id 决定，用的序是 `byCode`（UTF-16 码元序；本机 `localeCompare` 在这段 ASCII 上
+  // 与它同向，换语言环境不保证）。本条只钉「换数组顺序不改输出」：`github:` 与 `jira:` 在这段 ASCII 上
+  // 两种序巧合相同，它分辨不了码元序与 ICU 之争，那件事的边界写在 byCode 注释里。
   it("跨 provider 的并列项也按 id 破平，与数组喂入顺序无关", async () => {
     const github = issue(2603, "GitHub 那条", "2026-11-16T10:00:00Z");
     const jira = {
