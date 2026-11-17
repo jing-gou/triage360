@@ -30,6 +30,8 @@ set +a
   "${GITHUB_CLIENT_SECRET:?deploy.env 缺 GITHUB_CLIENT_SECRET}"
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8787}
+# 加密存储与密钥的落点（#13）：密钥文件 store.key 与数据同目录，都只有服务账号能读。
+DATA_DIR=${DATA_DIR:-/var/lib/triage360}
 DOMAIN=${DOMAIN:-${APP_BASE_URL#*://}}
 DOMAIN=${DOMAIN%%/*}
 
@@ -46,6 +48,10 @@ if ! id "$APP_USER" >/dev/null 2>&1; then
   useradd --system --home-dir "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
 fi
 mkdir -p "$APP_DIR"
+# 数据目录不跟着代码走：重新克隆/重置检出不该碰凭据，备份也只备份这一处。
+mkdir -p "$DATA_DIR"
+chown "$APP_USER:$APP_USER" "$DATA_DIR"
+chmod 700 "$DATA_DIR"
 
 # 2. 代码：这一份检出归部署所有，有本地改动就停下等人看过。
 # git 的 safe.directory 只认 system/global 配置（命令行 -c 被刻意忽略），
@@ -70,7 +76,7 @@ log "npm ci + build:server"
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" ci
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" run build:server
 
-# 4. 运行环境：六键、root 600；内容没变就不碰文件。
+# 4. 运行环境：七键、root 600；内容没变就不碰文件。
 ENV_FILE=$APP_DIR/.env
 tmp_env=$(mktemp)
 trap 'rm -f "$tmp_env"' EXIT
@@ -80,6 +86,7 @@ umask 077
   printf 'FRONTEND_URL=%s\n' "$FRONTEND_URL"
   printf 'HOST=%s\n' "$HOST"
   printf 'PORT=%s\n' "$PORT"
+  printf 'DATA_DIR=%s\n' "$DATA_DIR"
   printf 'GITHUB_CLIENT_ID=%s\n' "$GITHUB_CLIENT_ID"
   printf 'GITHUB_CLIENT_SECRET=%s\n' "$GITHUB_CLIENT_SECRET"
 } > "$tmp_env"

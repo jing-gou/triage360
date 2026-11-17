@@ -8,4 +8,7 @@ build/
 *.log
 .DS_Store
 
+# 本地后端的加密存储与密钥（#13）；线上在 /var/lib/triage360，永远不进仓库。
+.data/
+
 .scratch/
