@@ -65,7 +65,9 @@ body {
   counter-increment: card;
   content: counter(card);
   position: absolute;
-  left: 17px;
+  /* 绝对定位的 containing block 是 padding box，所以左边框从 1px 变 3px 会把序号
+     往右推 2px——补偿落在 padding 上只稳住了标题，这里得自己减回去。 */
+  left: 15px;
   top: 15px;
   color: var(--muted);
   font-size: 12px;
