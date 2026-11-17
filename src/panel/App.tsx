@@ -74,7 +74,7 @@ export function App() {
             now: () => new Date(),
             scope: { assignee: login },
             zoneOffsetMinutes,
-            // 演示用判定表：真实判据在 #18，接进来的是同一个注入点，不是另一套逻辑。
+            // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
             sameEvent: demoSameEvent,
             ...local,
           });
@@ -95,6 +95,7 @@ export function App() {
         now: () => new Date(),
         scope,
         zoneOffsetMinutes,
+        // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
         sameEvent: demoSameEvent,
         ...local,
       });

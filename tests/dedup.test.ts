@@ -55,7 +55,7 @@ const GITEE = [
 
 /**
  * 「是不是同一件事」的答案表——来源侧的 worked example，测试不重新推导它。
- * 判定器本身长什么样是 #18 的事；这张卡要定的是判定器接入的位置与合并的结果形状。
+ * 判定器本身长什么样是语义匹配的事；这张卡要定的是判定器接入的位置与合并的结果形状。
  */
 const SAME_EVENT: readonly [string, string][] = [
   ["github:901", "gitee:jing-gou/legacy-importer#313"],
@@ -90,7 +90,7 @@ describe("seam 1 · 跨平台重复项合并", () => {
     const list = await buildTodayList(deps());
 
     // 票面 AC#3 前半句点名的字面对：GitHub 的「登录页 500」与 Gitee 的「Login 接口偶发 500」。
-    // 标题一个字都不相同，构建器照并——判据来自注入，不来自字面比较（#18 换真判据时这里不动）。
+    // 标题一个字都不相同，构建器照并——判据来自注入，不来自字面比较（换成真判据时这里不动）。
     const card = list.entries.find((entry) => entry.task.id === "gitee:jing-gou/legacy-importer#315");
 
     expect(card?.task.title).toBe("Login 接口偶发 500");
@@ -128,7 +128,7 @@ describe("seam 1 · 跨平台重复项合并", () => {
       "gitee:jing-gou/legacy-importer#314",
       "github:902",
     ]);
-    // 构建器自己不拿标题当判据：#18 说不是同一件事，同名的两条就各自成卡。
+    // 构建器自己不拿标题当判据：注入的判据说不是同一件事，同名的两条就各自成卡。
     expect(weekly.every((entry) => entry.mergedFrom === undefined)).toBe(true);
   });
 
