@@ -22,6 +22,8 @@ scope_note: 本文件不做决策，只把现状摊开。结论冲突点的严�
 > `git status --short` 空输出（工作树干净）。**手动排序的全部实现只存在于 `ticket/T07-drag-order`，尚未合入 main**：`git ls-tree --name-only origin/main:docs/adr` 只到 `0006-dedup-predicate-injection.md`，`origin/main:src/panel` 只有 `App.tsx / main.tsx / styles.css`（无 `manual-order.ts`）。`origin/main..HEAD` 是 4 个 commit。
 >
 > `docs/adr/` 实际文件：0001–0007 七份，**不存在 ADR-0008**（本文件也不新建）。
+>
+> 〔**主会话核对 2026-11-17**〕这句写完之后，同一个 PR 的第二个 commit `86b6c78` 确实新建了 `docs/adr/0008-manual-order-storage-location.md`——「不新建」约束的是这份审计自己的交付物，不是「0008 这个号永久留空」。0008 的状态是 **Proposed**：它只把 §C1–C3 那三处正面义务与两条路摊平，**没有替 owner 拍板存放位置**。另外 0008 引用的 `ADR-0007` 与 `src/panel/manual-order.ts` 都还在待批的 PR #31 上，main 上 `docs/adr/` 因此是 0001–0006 直接跳到 0008。
 
 ## 结论摘要（TL;DR）
 
