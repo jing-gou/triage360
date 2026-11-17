@@ -196,7 +196,11 @@ export function App() {
               {""}
               不会猜你想先做哪一类任务。
             </p>
-            <p className="notice-body">这份顺序存在这台浏览器的本地存储里——换浏览器或清空站点数据，顺序回到规则打分。</p>
+            <p className="notice-body">
+              这份顺序存在这台浏览器的本地存储里——换浏览器或清空站点数据，顺序回到规则打分。撤销授权和 30 天未访问的自动清除管的是服务端那份账，
+              {""}
+              不会清掉这里的顺序。
+            </p>
             <button autoFocus className="notice-close" onClick={dismissNotice} type="button">
               知道了
             </button>
