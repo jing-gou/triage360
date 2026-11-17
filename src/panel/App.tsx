@@ -25,7 +25,8 @@ const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
 const REASON_LABELS: Record<RuleId, string> = {
   overdue: "已逾期",
   dueToday: "今日到期",
-  recentUpdate: "最近更新",
+  noDeadline: "无截止时间",
+  dueLater: "未到截止日",
 };
 
 export function App() {
@@ -33,9 +34,13 @@ export function App() {
 
   useEffect(() => {
     let alive = true;
-    buildTodayList({ providers, http: sampleHttp, now: () => new Date(), scope }).then((next) => {
-      if (alive) setList(next);
-    });
+    // 「今日」按访客日历里的今天判：偏移由界面这一侧喂进来，构建器自己不读宿主时区（ADR-0005）。
+    const zoneOffsetMinutes = -new Date().getTimezoneOffset();
+    buildTodayList({ providers, http: sampleHttp, now: () => new Date(), scope, zoneOffsetMinutes }).then(
+      (next) => {
+        if (alive) setList(next);
+      },
+    );
     return () => {
       alive = false;
     };
@@ -55,7 +60,7 @@ export function App() {
         {list.entries.map(({ task, reason }) => {
           const source = SOURCE_LABELS[task.providerId];
           return (
-            <li className="card" key={task.id}>
+            <li className={`card card--${reason}`} key={task.id}>
               <a className="card-title" href={task.url}>
                 {task.title}
               </a>

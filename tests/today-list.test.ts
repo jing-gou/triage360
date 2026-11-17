@@ -120,8 +120,8 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
   // 为什么现在就把 dueAt 收进定稿：#6 要「逾期 / 今日到期置顶」，而核心层不许碰原始字段
   // （`docs/PRD.md:101`）。不在这里收，T04 只剩两条路——加第 8 个契约方法，或伸手进 raw。
   // GitHub 的 issue 自己没有截止时间，`due_on` 挂在 milestone 上且可为 null；
-  // Jira 的 `fields.duedate` 带 +0800。日期形式（不含时刻）的 duedate 怎么折算成「几点算到期」
-  // 属 #6 的判定，这里只做时间基准。
+  // Jira 的 `fields.duedate` 带 +0800。日期形式（不含时刻）的折算已由 #6 定在
+  // `dueFrom`（按日比，见 #6 的 ADR-0005），这里只做时间基准。
   const http = fakeHttp({
     github: {
       view: [
@@ -169,6 +169,7 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
         state: "open",
         updatedAt: "2026-11-16T06:00:00.000Z",
         dueAt: "2026-11-17T23:00:00.000Z",
+        duePrecision: "instant",
       },
       {
         id: "jira:10008",
@@ -178,12 +179,13 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
         state: "To Do",
         updatedAt: "2026-11-16T04:00:00.000Z",
         dueAt: "2026-11-18T01:00:00.000Z",
+        duePrecision: "instant",
       },
     ]);
   });
 });
 
-describe("seam 1 · 定稿的门：输出形状就是那七个键", () => {
+describe("seam 1 · 定稿的门：输出形状就是那八个键", () => {
   // toEqual 不会因为多一个 `dueAt: undefined` 而红，所以形状要单独钉住：
   // 「定稿」这句话得有一道能挡反例的门。键集合也不能按平台分叉——
   // 没有截止时间的条目照样写出 dueAt，否则 #6 的打分要先判「这家有没有这个键」。
@@ -194,7 +196,7 @@ describe("seam 1 · 定稿的门：输出形状就是那七个键", () => {
     feishu: { view: [feishuTask("task-9", "催一下季度评审材料", false, "2026-11-16T13:10:00+08:00")] },
   });
 
-  it("四家归一化之后的键集合完全一致，且恒为七个", async () => {
+  it("四家归一化之后的键集合完全一致，且恒为八个", async () => {
     const list = await buildTodayList({
       providers: [createGithubLikeProvider(), createGiteeLikeProvider(), createJiraLikeProvider(), createFeishuSampleProvider()],
       http,
@@ -205,7 +207,7 @@ describe("seam 1 · 定稿的门：输出形状就是那七个键", () => {
     const shapes = list.entries.map((entry) => Object.keys(entry.task).sort().join(","));
 
     expect(list.entries).toHaveLength(4);
-    expect([...new Set(shapes)]).toEqual(["dueAt,id,providerId,state,title,updatedAt,url"]);
+    expect([...new Set(shapes)]).toEqual(["dueAt,duePrecision,id,providerId,state,title,updatedAt,url"]);
   });
 });
 
@@ -301,6 +303,48 @@ describe("seam 1 · 下一轮构建", () => {
         updatedAt: "2026-11-16T06:00:00.000Z",
       },
     ]);
+  });
+
+  // #9 会把跨轮快照落盘，落的就是 `previous` 这一点数据：少存第 8 键，`ruleOf` 不报错，
+  // 而是静默落回瞬间支——同一条只写日期的截止会在本地早上从「今日到期」变成「已逾期」。
+  // 这里钉的是「原样带过来」：保留的条目必须连粒度一起带过来。
+  it("跨轮保留的条目带着第 8 键：只写日期的截止不会因为换轮变成逾期", async () => {
+    const firstRound = fakeHttp({
+      jira: {
+        view: [
+          {
+            id: "10050",
+            key: "TRI-50",
+            fields: {
+              summary: "周报只写了日期",
+              status: { name: "In Progress" },
+              updated: "2026-11-16T14:00:00.000+0800",
+              duedate: "2026-11-17",
+            },
+          },
+        ],
+      },
+    });
+    const round1 = await buildTodayList({
+      providers: [jira],
+      http: firstRound,
+      now: clock,
+      scope,
+      zoneOffsetMinutes: 480,
+    });
+    expect(round1.entries.map((entry) => entry.reason)).toEqual(["dueToday"]);
+
+    const secondRound = fakeHttp({ jira: { view: [], byId: [] } });
+    const round2 = await buildTodayList({
+      providers: [jira],
+      http: secondRound,
+      now: clock,
+      scope,
+      previous: round1.entries.map((entry) => entry.task),
+      zoneOffsetMinutes: 480,
+    });
+
+    expect(round2.entries.map((entry) => [entry.reason, entry.task.duePrecision])).toEqual([["dueToday", "day"]]);
   });
 
   it("刚完成的条目不会被上一轮的旧状态复活", async () => {

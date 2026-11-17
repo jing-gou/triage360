@@ -21,8 +21,8 @@ export type Http = (url: string, init?: HttpRequestInit) => Promise<HttpResponse
 export type RawItem = Record<string, unknown>;
 
 /**
- * 归一化后的任务：跨平台共用的最小形状，定稿于 T03。
- * 七个键恒定，不按平台分叉；平台专有信息不许夹带在七键之外——各家差异一律在 `normalize` 里消化掉，
+ * 归一化后的任务：跨平台共用的最小形状，定稿于 T03、T04 补第八键。
+ * 八个键恒定，不按平台分叉；平台专有信息不许夹带在八键之外——各家差异一律在 `normalize` 里消化掉，
  * 否则跨平台合并（T05）与打分（T04）会建在原始字段上。
  * `dueAt` 之所以在里面：逾期与今日到期是跨平台共有的语义（US#23），不是 GitHub 的 milestone 泄漏进了全局形状。
  */
@@ -41,6 +41,12 @@ export interface Task {
    * 它是跨平台共有的语义（US#23 要逾期与今日到期在视觉上更强），不是某家平台的专有信息。
    */
   dueAt?: string;
+  /**
+   * `dueAt` 的粒度：源站只写了日期（`day`）还是写了时刻（`instant`），与 `dueAt` 同生同灭。
+   * 少了它，「只写日期」和「恰好 UTC 午夜」进了定稿就长得一样，而这两件事对访客的意思相反：
+   * 前者是「那一天做完都算及时」，得按日比；后者是一个瞬间，得按瞬间比（ADR-0005）。
+   */
+  duePrecision?: DuePrecision;
 }
 
 /** 清单范围：v1 只有「派给我的」。 */
@@ -74,3 +80,20 @@ export function makeTaskId(providerId: string, remoteId: string | number): strin
 export function remoteIdOf(taskId: string): string {
   return taskId.slice(taskId.indexOf(":") + 1);
 }
+
+/** 截止时间写到了哪一层精度：只有日期，还是带时刻。 */
+export type DuePrecision = "day" | "instant";
+
+/**
+ * 原始截止值 → 定稿里那一对键。折算与粒度判定只在这一处，两件事共用同一个 `DATE_ONLY` 判断，
+ * 所以不会出现 `dueAt` 说是午夜、`duePrecision` 说是日期。
+ * 只写日期（`2026-11-17`）说的是「这天结束之前」：`dueAt` 取那一天的起点，「是哪一天」由它的
+ * UTC 日期部分带下去，打分按日比而不拿它当时刻用。带时刻的原始串仍走 `Date` 解析。
+ */
+export function dueFrom(raw: string): { dueAt: string; duePrecision: DuePrecision } {
+  return DATE_ONLY.test(raw)
+    ? { dueAt: `${raw}T00:00:00.000Z`, duePrecision: "day" }
+    : { dueAt: new Date(raw).toISOString(), duePrecision: "instant" };
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;

@@ -3,6 +3,7 @@
   --ink: #1a1a1a;
   --muted: #6b7280;
   --line: #e5e7eb;
+  --alert: #b42318;
   --bg: #fafafa;
 }
 
@@ -54,15 +55,19 @@ body {
   position: relative;
   background: #fff;
   border: 1px solid var(--line);
+  /* 左边框常态就占 3px：理由档位靠换色强调，靠加宽度会把卡片文字推歪。 */
+  border-left-width: 3px;
   border-radius: 10px;
-  padding: 14px 16px 13px 46px;
+  padding: 14px 16px 13px 44px;
 }
 
 .card::before {
   counter-increment: card;
   content: counter(card);
   position: absolute;
-  left: 17px;
+  /* 绝对定位的 containing block 是 padding box，所以左边框从 1px 变 3px 会把序号
+     往右推 2px——补偿落在 padding 上只稳住了标题，这里得自己减回去。 */
+  left: 15px;
   top: 15px;
   color: var(--muted);
   font-size: 12px;
@@ -102,8 +107,24 @@ body {
   font-size: 11px;
 }
 
-/* 理由标识是这张卡上唯一解释「为什么排在这里」的字，所以它要压过旁边那些限定词。 */
-.card-reason {
+/*
+  US#23：时间压力要在读标题之前就被感知，所以强调落在卡片自身，而不是把每一张的理由都加粗。
+  第三档沿用 .card-meta 的弱化色——它是常态，常态要安静。
+*/
+.card--overdue {
+  border-left-color: var(--alert);
+}
+
+.card--dueToday {
+  border-left-color: var(--ink);
+}
+
+.card--overdue .card-reason {
+  color: var(--alert);
+  font-weight: 500;
+}
+
+.card--dueToday .card-reason {
   color: var(--ink);
   font-weight: 500;
 }

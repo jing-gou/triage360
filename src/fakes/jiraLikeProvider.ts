@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, dueFrom, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 假 provider：按 Jira Cloud REST v3 的形状构造请求并解析响应，数据来自注入的源站替身。
@@ -50,7 +50,7 @@ export function createJiraLikeProvider(): Provider {
         url: `${SITE}/browse/${issue.key}`,
         state: issue.fields.status.name,
         updatedAt: new Date(issue.fields.updated).toISOString(),
-        dueAt: issue.fields.duedate ? new Date(issue.fields.duedate).toISOString() : undefined,
+        ...(issue.fields.duedate ? dueFrom(issue.fields.duedate) : { dueAt: undefined, duePrecision: undefined }),
       };
     },
 
