@@ -14,6 +14,7 @@
 - **任务卡（Card）** — 今日清单里一条任务在界面上的呈现。
 - **来源角标（Source Corner）** — 右下角角标里列出本轮接线的平台名与生成时间的那一行。ticket 里的「Jira 卡 / 飞书卡」指带来源名的**任务卡**，不是它。
 - **构建器（`buildTodayList`）** — seam 1。输入只有 providers、注入的取数通道、注入的时钟、范围、上一轮的任务集合、注入的访客时区偏移、注入的**同一件事**判定器、注入的**手动顺序**、注入的**放置记录**；除此之外没有第二种信息来源——它自己不读浏览器存储，也不读宿主时区。
+- **凭据生命周期决策器（`decideCredentialAction`）** — seam 2。纯函数：输入 `now` / `expiresAt` / `lastRefreshAt` / `isDemoTenant`，输出 `serve` / `lazy-refresh` / `scheduled-refresh` / `expire-to-reauth`。`lastRefreshAt` 记的是刷新**尝试**（成功失败都记）：过期之后已经试过、手里这枚却仍然过期，就指向重连而不是再刷——Gitee 的一天过期与 Atlassian 的轮换失效都靠这条不打转。演示租户不在请求路径上刷新，交给 cron。同模块的 `rotateCredential` 负责原子替换：整对写库成功才把旧 refresh token 交回去退役，写失败返回原记录继续用——坏一次轮换不丢租户。
 - **访客日历日** — 「今日到期」判的是哪一天：把瞬间平移到注入的 `zoneOffsetMinutes` 那一侧再取日；省略该输入就是 UTC 日。构建器自己不读宿主时区——读了，同一个输入在 CI 与浏览器里就会判出两种顺序。带时刻的截止（`duePrecision: "instant"`）才走这次平移；只写日期的（`"day"`）源站已经把日子写死了，再平移一次会把它推到相邻日。注入的是**偏移**不是**时区**：一个数字管整轮，夏令时换日之后、截止落在换日另一侧的条目会偏一小时（ADR-0005）。
 - **轮次（Round）** — 一次 `buildTodayList` 调用。跨轮状态由调用方保管：构建器读 `previous`，自己不落盘，provider 也不记上一轮。
 - **provider** — 一个平台的适配器，实现七法契约：`search` / `getByIds` / `normalize` / `doneStates` / `deletedStates` / `pollIntervalMs` / `scopeDescriptor`。
