@@ -54,7 +54,7 @@ export function App() {
       now: () => new Date(),
       scope,
       zoneOffsetMinutes,
-      // 演示用判定表：真实判据在 #18，接进来的是同一个注入点，不是另一套逻辑。
+      // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
       sameEvent: demoSameEvent,
       // 上一轮排的顺序与往期放置都回到构建器：存储归界面管，构建器只认注入（ADR-0007、ADR-0009）。
       manualOrder: loadManualOrder(),
