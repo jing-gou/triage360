@@ -1,16 +1,28 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { Provider, Scope } from "../core/provider";
+import type { AuthTier, Provider, Scope } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
 import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
 import { createGithubProvider } from "../providers/github";
-import { API_BASE, adoptSessionFromUrl, fetchGithubItems, forgetSession, revokeSession, UnauthenticatedError } from "./api";
+import {
+  API_BASE,
+  adoptSessionFromUrl,
+  fetchGithubItems,
+  forgetSession,
+  requestAuthUrl,
+  revokeSession,
+  UnauthenticatedError,
+  type GithubAuth,
+  type TierGrant,
+} from "./api";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { clearLocalRecords, hasLocalRecords } from "./local-records";
 import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrder } from "./manual-order";
 
 const scope: Scope = { assignee: "me" };
 const sampleProviders: Provider[] = createSampleProviders();
+/** 授权档位弹层的平台清单：GitHub 用真 provider 的两档，其余用样例 provider 的粒度说明。 */
+const authProviders: Provider[] = [createGithubProvider(), ...sampleProviders.filter((one) => one.id !== "github")];
 const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
 /**
@@ -48,8 +60,8 @@ interface OrderNotice {
   to: number;
 }
 
-/** 右下角的三个弹层（#13）：连接前的自陈、撤销授权、清除本地记录。同一时刻只有一个。 */
-type Dialog = "consent" | "revoke" | "clear-local";
+/** 右下角的四个弹层（#13、#14）：连接前的自陈、撤销授权、清除本地记录、授权档位。同一时刻只有一个。 */
+type Dialog = "consent" | "revoke" | "clear-local" | "tiers";
 
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
@@ -63,6 +75,8 @@ export function App() {
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [hasLocal, setHasLocal] = useState(false);
+  /** 服务端报回来的各档实际授权；只有连上真实会话之后才有。 */
+  const [auth, setAuth] = useState<GithubAuth | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -79,13 +93,13 @@ export function App() {
       if (session !== null) {
         setHasSession(true);
         try {
-          const { items, login } = await fetchGithubItems(API_BASE, session);
+          const payload = await fetchGithubItems(API_BASE, session);
           const next = await buildTodayList({
             providers: [createGithubProvider()],
             // 条目已经从服务端取回，这一次取数不再出发请求；归一与排序仍在本机走 seam 1。
-            http: async () => ({ status: 200, headers: {}, body: { items } }),
+            http: async () => ({ status: 200, headers: {}, body: { items: payload.items } }),
             now: () => new Date(),
-            scope: { assignee: login },
+            scope: { assignee: payload.login },
             zoneOffsetMinutes,
             // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
             sameEvent: demoSameEvent,
@@ -93,6 +107,7 @@ export function App() {
           });
           if (!alive) return;
           setList(next);
+          setAuth(payload.auth);
           setLive(true);
           setReconnect(false);
           return;
@@ -102,7 +117,10 @@ export function App() {
             forgetSession();
             if (alive) setHasSession(false);
           }
-          if (alive) setReconnect(true);
+          if (alive) {
+            setAuth(null);
+            setReconnect(true);
+          }
         }
       }
       const next = await buildTodayList({
@@ -184,6 +202,22 @@ export function App() {
     window.location.reload();
   }
 
+  /** 某一档（或原授权被改小后重来）：服务端把这次授权挂回同一租户，返回 GitHub 授权页。 */
+  async function authorizeTier(tier: AuthTier): Promise<void> {
+    const session = adoptSessionFromUrl();
+    if (session === null) {
+      setDialogError("这台浏览器里没有会话记录，先连接 GitHub 再来。");
+      return;
+    }
+    setDialogBusy(true);
+    try {
+      window.location.href = await requestAuthUrl(API_BASE, session, tier);
+    } catch {
+      setDialogBusy(false);
+      setDialogError("没有发起授权：会话已失效或服务端不可达，稍后再试。");
+    }
+  }
+
   /** 清完重载：内存里那份顺序还按旧记录排着，重载才和盘上一致。 */
   function clearLocal(): void {
     clearLocalRecords();
@@ -196,6 +230,9 @@ export function App() {
 
   // 界面上只有这一个时间基准：构建器盖上的一致时间，不再伸手取第二个时钟。
   const generatedAt = new Date(list.generatedAt);
+  // GitHub 侧把某一档授权改小时，角标当场标出来：缺的 scope 不藏在弹层里（T12 AC#3）。
+  const scopeGap =
+    auth !== null && Object.values(auth.grants).some((grant) => grant !== undefined && grant.missing.length > 0);
 
   return (
     <main className="panel">
@@ -306,6 +343,14 @@ export function App() {
             {" · "}
           </>
         )}
+        {live && (
+          <>
+            <button className="corner-link" onClick={() => openDialog("tiers")} type="button">
+              {scopeGap ? "授权档位 · 实际授权已缩小" : "授权档位"}
+            </button>
+            {" · "}
+          </>
+        )}
         {hasLocal && (
           <>
             <button className="corner-link" onClick={() => openDialog("clear-local")} type="button">
@@ -349,6 +394,7 @@ export function App() {
         <Modal title="连接 GitHub 之前" onDismiss={() => setDialog(null)}>
           <p className="notice-body">
             同意后跳到 GitHub 的授权页面。服务端会存：你的 GitHub 登录名、加密后的 access token、这次授权是哪一档、GitHub 实际授予的 scope、以及这条记录的创建与最近访问时间。
+            连上之后，右下角的「授权档位」可以再单独授权私有仓库——那是第二次授权，两个 token 分开存。
           </p>
           <p className="notice-body">
             token 只用来读指派给你、还没关闭的 issue 的标题、状态、更新时间与截止时间。正文、评论、diff、代码永不入库。
@@ -419,8 +465,78 @@ export function App() {
           </div>
         </Modal>
       )}
+      {/*
+        授权档位（#14）：两档各是一次独立授权，令牌分开存；实际授予以 GitHub 返回为准。
+        按 provider 自报的粒度铺开，平台差异全在 descriptor 里——这一层不认任何一家的名字。
+      */}
+      {dialog === "tiers" && (
+        <Modal title="授权档位" onDismiss={() => { if (!dialogBusy) setDialog(null); }}>
+          <p className="notice-body">
+            每一档是一次独立的 GitHub 授权，令牌分开存。实际授予的 scope 以 GitHub 返回为准：在 GitHub
+            侧把授权改小，这里会指出来，不会静默少显示。
+          </p>
+          {authProviders.map((provider) => {
+            const descriptor = provider.scopeDescriptor(scope);
+            const providerLabel = SOURCE_LABELS[provider.id]?.label ?? provider.id;
+            if (descriptor.auth.kind === "uniform") {
+              return (
+                <p className="notice-body" key={provider.id}>
+                  <span className="tier-name">{providerLabel}</span> · {descriptor.auth.note}
+                </p>
+              );
+            }
+            return (
+              <div className="tier-group" key={provider.id}>
+                <p className="tier-group-title">{providerLabel}</p>
+                {descriptor.auth.tiers.map(({ tier, label }) => {
+                  const grant = auth?.grants[tier];
+                  return (
+                    <div className="tier-row" key={tier}>
+                      <div className="tier-body">
+                        <span className="tier-name">{label}</span>
+                        <span className="tier-scope">{grant === undefined ? "未授权" : grantLine(grant)}</span>
+                        {grant !== undefined && grant.missing.length > 0 && (
+                          <span className="tier-warn">
+                            GitHub 实际授予比这一档应有的少：缺 {grant.missing.join("、")}。到 GitHub
+                            授权页调整后点「重新授权」。
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        className="notice-secondary"
+                        disabled={dialogBusy}
+                        onClick={() => authorizeTier(tier)}
+                        type="button"
+                      >
+                        {grant === undefined ? "授权" : "重新授权"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          <p className="notice-body">
+            这一屏的顺序和放置记录存在浏览器里，与授权无关；撤销授权不会清它们。
+          </p>
+          <p className="notice-body">
+            只想关掉私有仓库访问：到 GitHub 的已授权应用页把这一档的 scope 调小，回来刷新即可——这里会如实显示。
+          </p>
+          {dialogError !== null && <p className="notice-error">{dialogError}</p>}
+          <div className="notice-actions">
+            <button className="notice-secondary" disabled={dialogBusy} onClick={() => setDialog(null)} type="button">
+              关闭
+            </button>
+          </div>
+        </Modal>
+      )}
     </main>
   );
+}
+
+/** 弹层里一行「实际授予」：空数组也是真值（有响应头但没列 scope），不吞掉。 */
+function grantLine(grant: TierGrant): string {
+  return grant.scopes.length === 0 ? "已授权 · GitHub 未报告 scope" : `已授权 · ${grant.scopes.join(" ")}`;
 }
 
 /** 四个弹层共用的一层壳：遮罩点掉即退，点内容不冒泡；标题与关闭都只有一份写法。 */
