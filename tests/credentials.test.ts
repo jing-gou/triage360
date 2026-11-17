@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  credentialFromTokens,
   decideCredentialAction,
-  freshCredential,
   recordRefreshAttempt,
-  REFRESH_SKEW_MS,
   rotateCredential,
   type CredentialRecord,
 } from "../src/core/credentials";
@@ -38,10 +37,11 @@ describe("seam 2 · 凭据生命周期决策器：动作", () => {
   });
 
   it("进入提前量（过期前 5 分钟）才开始刷：真实租户懒刷新、演示租户走定时", () => {
-    expect(at(EXPIRES - REFRESH_SKEW_MS - 1)).toBe("serve");
-    expect(at(EXPIRES - REFRESH_SKEW_MS)).toBe("lazy-refresh");
+    // 边界写死字面值：常量若被改小/改大，这里要变红，而不是跟着实现一起漂。
+    expect(at(EXPIRES - 5 * MIN - 1)).toBe("serve");
+    expect(at(EXPIRES - 5 * MIN)).toBe("lazy-refresh");
     expect(at(EXPIRES - 1)).toBe("lazy-refresh");
-    expect(at(EXPIRES - REFRESH_SKEW_MS, { isDemoTenant: true })).toBe("scheduled-refresh");
+    expect(at(EXPIRES - 5 * MIN, { isDemoTenant: true })).toBe("scheduled-refresh");
     expect(at(EXPIRES - 1, { isDemoTenant: true })).toBe("scheduled-refresh");
   });
 
@@ -151,7 +151,7 @@ describe("seam 2 · 凭据生命周期决策器：坏一次轮换不丢租户", 
     ).toBe("expire-to-reauth");
 
     // 重连写入新的一对，判定回到 serve；失败那一次没有留下任何不可恢复的状态。
-    const reauthorized = freshCredential({ accessToken: "a2", refreshToken: "r2", expiresAt: EXPIRES + DAY }, EXPIRES + 3 * MIN);
+    const reauthorized = credentialFromTokens({ accessToken: "a2", refreshToken: "r2", expiresAt: EXPIRES + DAY }, EXPIRES + 3 * MIN);
     expect(
       decideCredentialAction({ now: EXPIRES + 3 * MIN, expiresAt: reauthorized.expiresAt, lastRefreshAt: reauthorized.lastRefreshAt, isDemoTenant: false }),
     ).toBe("serve");

@@ -42,6 +42,15 @@ export function appendLearningRecord(record: PlacementRecord): void {
   }
 }
 
+/** 本地清除入口（#13 承接 #10 AC#5）：删掉放置记录，下一轮加权消失。 */
+export function clearLearningRecords(): void {
+  try {
+    localStorage.removeItem(RECORDS_KEY);
+  } catch {
+    // 有意吞掉：这里没有比「保持原样」更好的动作。
+  }
+}
+
 function isPlacementRecord(one: unknown): one is PlacementRecord {
   if (typeof one !== "object" || one === null) return false;
   const { providerId, taskId, group, at, position } = one as Record<string, unknown>;

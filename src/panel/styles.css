@@ -53,13 +53,22 @@ body {
   font-size: 12px;
 }
 
-/* 连接入口只在样例态出现；与标题同一套约定：常态不带下划线，悬停才出现。 */
-a.corner-link {
+/*
+  连接、撤销、清除三处入口共用一种形态：常态是角标里的弱化文字，悬停才出现下划线。
+  按钮与链接同貌，因为它们在角标里承担同一种角色。
+*/
+.corner-link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--muted);
+  font: inherit;
   text-decoration: none;
+  cursor: pointer;
 }
 
-a.corner-link:hover {
+.corner-link:hover {
   text-decoration: underline;
 }
 
@@ -223,4 +232,43 @@ a.card-source:hover {
   font: inherit;
   font-size: calc(13px * var(--site-type, 1));
   cursor: pointer;
+}
+
+.notice-close:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 弹层底部两个动作：右边是主按钮，左边是弱化的退路。 */
+.notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: calc(6px * var(--site-space, 1));
+  margin-top: calc(14px * var(--site-space, 1));
+}
+
+.notice-secondary {
+  padding: calc(6px * var(--site-space, 1)) calc(10px * var(--site-space, 1));
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: calc(13px * var(--site-type, 1));
+  cursor: pointer;
+}
+
+.notice-secondary:hover {
+  color: var(--site-fg);
+}
+
+.notice-secondary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.notice-error {
+  margin: calc(8px * var(--site-space, 1)) 0 0;
+  color: var(--alert);
+  font-size: calc(13px * var(--site-type, 1));
 }
