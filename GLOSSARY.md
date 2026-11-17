@@ -3,14 +3,15 @@
 产品与代码共用这套词。命名冲突时以本文件为准，改名字比留下两个词便宜。
 
 - **今日清单（Today List）** — 一次构建得到的有序**清单条目**集合，带生成时间。seam 1 的输出。
-- **清单条目（Entry）** — 一个任务加上它为什么排在这里：`{ task, reason }`。理由不塞进任务：任务是跨平台最小形状（七键定稿），打分是构建器这一侧的事。
-- **理由标识（`reason`）** — 命中哪条打分规则，取值 `overdue` / `dueToday` / `recentUpdate`。它是标识不是句子：措辞属界面与 #8，分数留给 #10。
+- **清单条目（ListEntry）** — 一个任务加上它为什么排在这里：`{ task, reason }`。理由不塞进任务：任务是跨平台最小形状（七键定稿），打分是构建器这一侧的事。
+- **理由标识（`reason`，类型 `RuleId`）** — 命中哪条打分规则，取值 `overdue` / `dueToday` / `noDeadline` / `dueLater`。后两个同档：它们只是「为什么不在今天」的两个原因，不是两种紧急度。它是标识不是句子：措辞属界面与 #8，分数留给 #10。
 - **任务卡（Card）** — 今日清单里一条任务在界面上的呈现。
 - **来源角标（Source Corner）** — 右下角角标里列出本轮接线的平台名与生成时间的那一行。ticket 里的「Jira 卡 / 飞书卡」指带来源名的**任务卡**，不是它。
-- **构建器（`buildTodayList`）** — seam 1。输入只有 providers、注入的取数通道、注入的时钟、范围、上一轮的任务集合；除此之外没有第二种信息来源。
+- **构建器（`buildTodayList`）** — seam 1。输入只有 providers、注入的取数通道、注入的时钟、范围、上一轮的任务集合、注入的访客时区偏移；除此之外没有第二种信息来源。
+- **访客日历日** — 「今日到期」判的是哪一天：把瞬间平移到注入的 `zoneOffsetMinutes` 那一侧再取日；省略该输入就是 UTC 日。构建器自己不读宿主时区——读了，同一个输入在 CI 与浏览器里就会判出两种顺序。
 - **轮次（Round）** — 一次 `buildTodayList` 调用。跨轮状态由调用方保管：构建器读 `previous`，自己不落盘，provider 也不记上一轮。
 - **provider** — 一个平台的适配器，实现七法契约：`search` / `getByIds` / `normalize` / `doneStates` / `deletedStates` / `pollIntervalMs` / `scopeDescriptor`。
-- **假 provider** — 按真实平台形状构造请求并解析响应、数据来自字面量的 provider。T09 起被真实接入顶替，接口不变。
+- **假 provider** — 按真实平台形状构造请求并解析响应、数据来自字面量的 provider。唯一的例外是演示样例的截止日：它按「打开面板这一天」相对生成（ADR-0005），为的是展示那天不至于全部逾期，仍然不发网络请求。T09 起被真实接入顶替，接口不变。
 - **范围（Scope）** — 清单查什么。v1 只有「派给谁」。
 - **取数通道（`Http`）** — 注入给 provider 的请求函数。错误信息只暴露 URL 路径，query 可能带凭据。
-- **任务（Task）** — `normalize` 的输出，跨平台共用的最小形状：`id` / `providerId` / `title` / `url` / `state` / `updatedAt` / `dueAt`，T03 定稿。七键恒定、不按平台分叉：没有截止时间也要显式写 `dueAt: undefined`。`updatedAt` 与 `dueAt` 一律 UTC；平台专有信息不许夹带在七键之外，跨平台共有的语义（截止时间）属于定稿的一部分。
+- **任务（Task）** — `normalize` 的输出，跨平台共用的最小形状：`id` / `providerId` / `title` / `url` / `state` / `updatedAt` / `dueAt`，T03 定稿。七键恒定、不按平台分叉：没有截止时间也要显式写 `dueAt: undefined`。`updatedAt` 与 `dueAt` 一律 UTC；平台专有信息不许夹带在七键之外，跨平台共有的语义（截止时间）属于定稿的一部分。平台只写了日期没写时刻时，按「这天结束之前」折算成当日 23:59，折算只在 `toDueInstant` 一处——进了七键就分不出这两种原值了。
