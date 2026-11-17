@@ -272,3 +272,47 @@ a.card-source:hover {
   color: var(--alert);
   font-size: calc(13px * var(--site-type, 1));
 }
+
+/*
+  授权档位（#14）：一档一行、动作在右；实际授予与档位名并排，差异就地标出，不另起状态卡。
+*/
+.tier-group {
+  margin: 0 0 calc(6px * var(--site-space, 1));
+}
+
+.tier-group-title {
+  margin: calc(6px * var(--site-space, 1)) 0 0;
+  font-size: calc(13px * var(--site-type, 1));
+  font-weight: 600;
+}
+
+.tier-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: calc(10px * var(--site-space, 1));
+  padding: calc(3px * var(--site-space, 1)) 0;
+}
+
+.tier-body {
+  min-width: 0;
+}
+
+.tier-name {
+  font-size: calc(14px * var(--site-type, 1));
+  font-weight: 500;
+}
+
+.tier-scope {
+  margin-left: calc(8px * var(--site-space, 1));
+  color: var(--muted);
+  font-size: calc(12px * var(--site-type, 1));
+}
+
+.tier-warn {
+  display: block;
+  margin-top: calc(3px * var(--site-space, 1));
+  color: var(--alert);
+  font-size: calc(12px * var(--site-type, 1));
+  line-height: 1.5;
+}

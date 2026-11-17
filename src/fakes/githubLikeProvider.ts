@@ -1,4 +1,5 @@
-import { makeTaskId, remoteIdOf, dueFrom, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, dueFrom, tieredAuth, type Provider, type RawItem, type Task } from "../core/provider";
+import { GITHUB_TIERS } from "../providers/github";
 
 /**
  * 假 provider：按 GitHub 的形状构造请求 URL 并解析响应，数据来自本文件字面量。
@@ -88,7 +89,7 @@ export function createGithubLikeProvider(): Provider {
     },
 
     scopeDescriptor(scope) {
-      return `${REPO} · 指派给 ${scope.assignee}`;
+      return tieredAuth(`${REPO} · 指派给 ${scope.assignee}`, GITHUB_TIERS);
     },
   };
 }

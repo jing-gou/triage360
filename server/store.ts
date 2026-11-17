@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Tier } from "../src/core/provider";
 
 /**
  * 租户账本的落盘层（#13）：一条租户记录 = 会话标识的哈希 + 登录名 + 两个时刻 + 各档授权的密文。
@@ -13,12 +14,10 @@ import { join } from "node:path";
  * 进程单实例、同步写，整份文件原子替换（tmp + rename）：账本极小，简单比并发花活可靠。
  */
 
-export type Tier = "public" | "private";
-
 export interface StoredGrant {
   token: string;
-  /** GitHub 侧实际授予的 scope（来自 `X-OAuth-Scopes`），用来捕捉「授权被改小」。 */
-  scopes: string[];
+  /** GitHub 侧实际授予的 scope（来自 `X-OAuth-Scopes`），用来捕捉「授权被改小」；`null` = 响应头缺失、不知道。 */
+  scopes: string[] | null;
 }
 
 export interface Tenant {
@@ -35,7 +34,7 @@ interface StoredTenant {
   login: string;
   createdAt: number;
   lastSeenAt: number;
-  grants: Partial<Record<Tier, { cipher: string; scopes: string[] }>>;
+  grants: Partial<Record<Tier, { cipher: string; scopes: string[] | null }>>;
 }
 
 interface StoreFile {
@@ -89,7 +88,7 @@ export class EncryptedStore {
     if (tenant === undefined) throw new Error("租户记录在写入前消失");
     tenant.login = login;
     tenant.lastSeenAt = now;
-    tenant.grants[tier] = { cipher: encrypt(this.key, grant.token), scopes: [...grant.scopes] };
+    tenant.grants[tier] = { cipher: encrypt(this.key, grant.token), scopes: grant.scopes === null ? null : [...grant.scopes] };
     this.persist();
     return id;
   }
@@ -133,13 +132,13 @@ export class EncryptedStore {
     return true;
   }
 
-  /** 上游响应头给出的实际 scope 变了就更新（GitHub 侧被改小时，这里是最早的观测点）。 */
-  setScopes(sessionId: string, tier: Tier, scopes: string[]): void {
+  /** 上游响应头给出的实际 scope 变了就更新（GitHub 侧被改小时，这里是最早的观测点）；头缺失（`null`）也如实覆盖旧值。 */
+  setScopes(sessionId: string, tier: Tier, scopes: string[] | null): void {
     const record = this.tenantRecord(sessionId);
     const stored = record?.grants[tier];
     if (stored === undefined) return;
-    if (stored.scopes.length === scopes.length && stored.scopes.every((one, index) => one === scopes[index])) return;
-    stored.scopes = [...scopes];
+    if (sameScopes(stored.scopes, scopes)) return;
+    stored.scopes = scopes === null ? null : [...scopes];
     this.persist();
   }
 
@@ -168,7 +167,9 @@ export class EncryptedStore {
     const grants: Tenant["grants"] = {};
     for (const tier of ["public", "private"] as const) {
       const stored = record.grants[tier];
-      if (stored !== undefined) grants[tier] = { token: decrypt(this.key, stored.cipher), scopes: [...stored.scopes] };
+      if (stored !== undefined) {
+        grants[tier] = { token: decrypt(this.key, stored.cipher), scopes: stored.scopes === null ? null : [...stored.scopes] };
+      }
     }
     return { id, login: record.login, createdAt: record.createdAt, lastSeenAt: record.lastSeenAt, grants };
   }
@@ -195,6 +196,11 @@ export class EncryptedStore {
 
 function newId(): string {
   return randomBytes(32).toString("base64url");
+}
+
+function sameScopes(a: string[] | null, b: string[] | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.length === b.length && a.every((one, index) => one === b[index]);
 }
 
 function hashId(id: string): string {

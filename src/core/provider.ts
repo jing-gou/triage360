@@ -68,8 +68,45 @@ export interface Provider {
   deletedStates(): string[];
   /** 该平台的轮询间隔。 */
   pollIntervalMs(): number;
-  /** 人可读的范围说明，用于界面上的角标与范围显示。 */
-  scopeDescriptor(scope: Scope): string;
+  /**
+   * 这个平台的两件事：查的是哪一片（人可读），以及**授权粒度**。
+   * 授权粒度必须从 provider 出来：GitHub 有公开/私有两档，Gitee / Jira / 飞书 没有，
+   * 界面按这个结构渲染，不认得任何一家平台的名字（US#16、DECISIONS.md §0.4）。
+   */
+  scopeDescriptor(scope: Scope): ScopeDescriptor;
+}
+
+/** 授权档：同一平台内按公开/私有拆开的粒度。 */
+export type Tier = "public" | "private";
+
+/** 一档在界面上的名字：档位标识与标签由平台给。 */
+export interface TierChoice {
+  readonly tier: Tier;
+  readonly label: string;
+}
+
+/**
+ * 授权粒度：`tiered` 是可按档分别授权（GitHub），`uniform` 是平台侧没有这个维度。
+ * `uniform.note` 直接给界面读，避免差异散落进每个 `if`。
+ */
+export type AuthGranularity =
+  | { readonly kind: "tiered"; readonly tiers: readonly TierChoice[] }
+  | { readonly kind: "uniform"; readonly note: string };
+
+export interface ScopeDescriptor {
+  /** 本轮查的是哪一片，人可读。 */
+  readonly range: string;
+  readonly auth: AuthGranularity;
+}
+
+/** 平台侧没有公开/私有维度时的那一行说明：措辞只在这里出现。 */
+export function uniformAuth(range: string): ScopeDescriptor {
+  return { range, auth: { kind: "uniform", note: "该平台授权粒度不区分公开/私有" } };
+}
+
+/** 可按档授权的平台的描述：档位与标签由平台给，怎么铺开由界面按档渲染。 */
+export function tieredAuth(range: string, tiers: readonly TierChoice[]): ScopeDescriptor {
+  return { range, auth: { kind: "tiered", tiers } };
 }
 
 /** 任务 id 的编码只在这两个函数里出现，其余地方不解析它。 */
