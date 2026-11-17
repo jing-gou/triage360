@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildTodayList } from "../src/core/today-list";
 import type { Scope } from "../src/core/provider";
 import { createGithubLikeProvider } from "../src/fakes/githubLikeProvider";
+import { createJiraLikeProvider } from "../src/fakes/jiraLikeProvider";
 import { fakeHttp } from "../src/fakes/fakeHttp";
 
 const scope: Scope = { assignee: "me" };
@@ -11,13 +12,14 @@ function list(http: ReturnType<typeof fakeHttp>) {
   return buildTodayList({ providers: [createGithubLikeProvider()], http, now: clock, scope });
 }
 
-/** 同一条用例里要换时钟或换数组顺序，所以把这三样都留在参数上。 */
-function at(iso: string, items: unknown[]) {
+/** 同一条用例里要换时钟、换数组顺序或换访客时区，所以把这些都留在参数上。 */
+function at(iso: string, items: unknown[], extra: { zoneOffsetMinutes?: number } = {}) {
   return buildTodayList({
     providers: [createGithubLikeProvider()],
     http: fakeHttp({ github: { view: items } }),
     now: () => new Date(iso),
     scope,
+    ...extra,
   });
 }
 
@@ -39,7 +41,7 @@ function issue(number: number, title: string, updated_at: string, due_on?: strin
 
 describe("seam 1 · 规则打分", () => {
   // 置顶的依据是「今天不做就来不及」，不是「刚有人动过」。
-  // 这条用例刻意让逾期项三天没动、干扰项半小时前才动：按 updatedAt 排必然反。
+  // 这条用例刻意让逾期项三天没动、干扰项两小时半前才动：按 updatedAt 排必然反。
   it("逾期项排在前，哪怕另一条刚刚才动过", async () => {
     const result = await list(
       fakeHttp({
@@ -75,9 +77,9 @@ describe("seam 1 · 规则打分", () => {
     ]);
   });
 
-  // 「今日」取 UTC 日历日同一天，不是「未来 24 小时内」：后一条只差 90 分钟，但已是下一个 UTC 日。
-  // 按 24 小时窗口或按机器本地日界排，这两条的顺序会反过来（并列时按 id 破平，1801 在前）。
-  it("日界是 UTC 日历日：同一天才算今日到期", async () => {
+  // 「今日」在省略 `zoneOffsetMinutes` 时取 UTC 日历日同一天，不是「未来 24 小时内」：后一条只差 90 分钟，但已是下一个 UTC 日。
+  // 按 24 小时窗口排，这两条的顺序会反过来（并列时按 id 破平，1801 在前）。
+  it("省略偏移时日界是 UTC 日历日：同一天才算今日到期", async () => {
     const result = await buildTodayList({
       providers: [createGithubLikeProvider()],
       http: fakeHttp({
@@ -105,6 +107,7 @@ describe("seam 1 · 规则打分", () => {
             issue(2403, "重构设置页", "2026-11-16T23:00:00Z"),
             issue(2401, "补上过期审计日志", "2026-11-13T09:00:00Z", "2026-11-15T09:00:00Z"),
             issue(2402, "今天下班前交周报", "2026-11-16T10:00:00Z", "2026-11-17T12:00:00Z"),
+            issue(2404, "下周的评审", "2026-11-16T22:00:00Z", "2026-11-24T09:00:00Z"),
           ],
         },
       }),
@@ -115,7 +118,9 @@ describe("seam 1 · 规则打分", () => {
     expect(result.entries.map((entry) => [entry.task.title, entry.reason])).toEqual([
       ["补上过期审计日志", "overdue"],
       ["今天下班前交周报", "dueToday"],
-      ["重构设置页", "recentUpdate"],
+      // 第三档是同一档、两个原因：一个压根没有截止，一个截止在更晚的那天。
+      ["重构设置页", "noDeadline"],
+      ["下周的评审", "dueLater"],
     ]);
   });
 });
@@ -151,6 +156,62 @@ describe("seam 1 · 时钟与确定性", () => {
     expect(ids(await at("2026-11-17T01:00:00Z", pair))).toEqual(["github:2601", "github:2602"]);
     expect(ids(await at("2026-11-17T01:00:00Z", [...pair].reverse()))).toEqual(["github:2601", "github:2602"]);
   });
+
+  // 上面那条只在同一家内部破平。T05 之后真正没人管的是跨家并列：四条来源同档同更新时间时，
+  // 谁在前仍然只能由 id 决定，而 `github:` 与 `jira:` 的比较用的是码位序，不是宿主 ICU。
+  it("跨 provider 的并列项也按 id 破平，与数组喂入顺序无关", async () => {
+    const github = issue(2603, "GitHub 那条", "2026-11-16T10:00:00Z");
+    const jira = {
+      id: "10009",
+      key: "TRI-9",
+      self: "https://sample-jira.atlassian.net/rest/api/3/issue/10009",
+      fields: { summary: "Jira 那条", status: { name: "To Do" }, updated: "2026-11-16T18:00:00.000+0800" },
+    };
+    const view = (jiraFirst: boolean) =>
+      buildTodayList({
+        providers: jiraFirst ? [createJiraLikeProvider(), createGithubLikeProvider()] : [createGithubLikeProvider(), createJiraLikeProvider()],
+        http: fakeHttp({
+          github: { view: [github] },
+          jira: { view: [jira] },
+        }),
+        now: () => new Date("2026-11-17T01:00:00Z"),
+        scope,
+      });
+
+    const expected = ["GitHub 那条", "Jira 那条"]; // `github:` 的 `g` 在 `jira:` 的 `j` 之前
+    expect((await view(false)).entries.map((entry) => entry.task.title)).toEqual(expected);
+    expect((await view(true)).entries.map((entry) => entry.task.title)).toEqual(expected);
+  });
+
+  // 「今日到期」也要能被时钟移进移出，否则 AC#1 只测到了逾期边界：这两次构建跨过的是 UTC 午夜。
+  it("换时钟会把条目移出今日到期档", async () => {
+    const tonight = issue(2503, "今晚截止", "2026-11-16T10:00:00Z", "2026-11-17T23:30:00Z");
+
+    expect((await at("2026-11-16T12:00:00Z", [tonight])).entries.map((entry) => entry.reason)).toEqual(["dueLater"]);
+    expect((await at("2026-11-17T12:00:00Z", [tonight])).entries.map((entry) => entry.reason)).toEqual(["dueToday"]);
+  });
+
+  // 注释与 ADR 都写着「时钟只取一次」，那得是可红的断言：逐项取时间的话，
+  // 排在日界两侧的条目会随评估时刻漂档，而这条用例的两次构建会给出不同结果。
+  it("一轮构建只读一次时钟", async () => {
+    let ticks = 0;
+    const result = await buildTodayList({
+      providers: [createGithubLikeProvider()],
+      http: fakeHttp({
+        github: {
+          view: [
+            issue(2504, "今晚截止", "2026-11-16T10:00:00Z", "2026-11-17T23:30:00Z"),
+            issue(2505, "明天早高峰", "2026-11-16T10:00:00Z", "2026-11-18T00:30:00Z"),
+          ],
+        },
+      }),
+      // 每次调用前进一小时：读第二次时钟的实现会把 2505 也算成今日到期。
+      now: () => new Date(Date.parse("2026-11-17T23:00:00Z") + ticks++ * 3_600_000),
+      scope,
+    });
+
+    expect(result.entries.map((entry) => entry.reason)).toEqual(["dueToday", "dueLater"]);
+  });
 });
 
 describe("seam 1 · 打分只吃元数据", () => {
@@ -170,11 +231,66 @@ describe("seam 1 · 打分只吃元数据", () => {
     const plain = await at("2026-11-17T01:00:00Z", quiet);
     const withBodies = await at("2026-11-17T01:00:00Z", noisy);
 
-    expect(withBodies.entries).toEqual(plain.entries);
+    // 期望值写成字面量：两组输入只差正文，所以它们必须落在同一份字面量上。
+    // 只断言「两者相等」的话，实现整体错也照样绿——它挡不住「顺序由实现自己定义」。
+    const expected = [
+      ["中午交周报", "dueToday"],
+      ["傍晚交发票", "noDeadline"],
+    ];
+    expect(plain.entries.map((entry) => [entry.task.title, entry.reason])).toEqual(expected);
+    expect(withBodies.entries.map((entry) => [entry.task.title, entry.reason])).toEqual(expected);
     // 七键之外没有 `body`：正文不进任务，也就无处被打分读走。
     expect(withBodies.entries.map((entry) => Object.keys(entry.task).sort().join(","))).toEqual([
       "dueAt,id,providerId,state,title,updatedAt,url",
       "dueAt,id,providerId,state,title,updatedAt,url",
+    ]);
+  });
+});
+
+describe("seam 1 · 只写日期的截止", () => {
+  // T03 把「日期形式（不含时刻）的 duedate 怎么折算成『几点算到期』」指名交给本票
+  // （`tests/today-list.test.ts:123`）。只写日期说的是「这天结束之前」，不是这天 00:00：
+  // 按午夜折算，用户在到期日几乎整天看到「已逾期」，今日到期一档那天永远不出现。
+  it("当天中午仍算今日到期，不按午夜算已经逾期", async () => {
+    const result = await at("2026-11-17T12:00:00Z", [
+      issue(2801, "周报只写了日期", "2026-11-16T09:00:00Z", "2026-11-17"),
+    ]);
+
+    expect(result.entries.map((entry) => [entry.task.title, entry.reason])).toEqual([
+      ["周报只写了日期", "dueToday"],
+    ]);
+  });
+
+  it("折算的是这一天的末尾：过完那天才逾期", async () => {
+    const result = await at("2026-11-18T00:30:00Z", [
+      issue(2802, "周报只写了日期", "2026-11-16T09:00:00Z", "2026-11-17"),
+    ]);
+
+    expect(result.entries.map((entry) => entry.reason)).toEqual(["overdue"]);
+  });
+});
+
+describe("seam 1 · 今日按访客的日历日", () => {
+  // 面板是「早上打开看一眼」的东西：UTC+8 的访客在本地 11-17 凌晨两点看，
+  // 当天中午截止的那条属于他的今天，却属于下一个 UTC 日。不喂时区，今日到期这一档在早上是空的。
+  const localMorning = "2026-11-16T18:00:00Z"; // 本地 +08:00 = 11-17 02:00
+  const dueLocalNoon = issue(2901, "本地明天中午的周报", "2026-11-16T09:00:00Z", "2026-11-17T04:00:00Z"); // 本地 11-17 12:00
+
+  it("不注入偏移就还是 UTC 日界：那条属于下一个 UTC 日", async () => {
+    expect((await at(localMorning, [dueLocalNoon])).entries.map((entry) => entry.reason)).toEqual(["dueLater"]);
+  });
+
+  it("注入 +08:00 后，访客本地的当天中午截止算今日到期", async () => {
+    const result = await at(localMorning, [dueLocalNoon], { zoneOffsetMinutes: 480 });
+
+    expect(result.entries.map((entry) => entry.reason)).toEqual(["dueToday"]);
+  });
+
+  it("逾期不看时区：截止瞬间过了就是过了", async () => {
+    const late = issue(2902, "已经过点的评审", "2026-11-16T09:00:00Z", "2026-11-16T17:30:00Z");
+
+    expect((await at(localMorning, [late], { zoneOffsetMinutes: 480 })).entries.map((e) => e.reason)).toEqual([
+      "overdue",
     ]);
   });
 });

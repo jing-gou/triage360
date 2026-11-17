@@ -74,3 +74,15 @@ export function makeTaskId(providerId: string, remoteId: string | number): strin
 export function remoteIdOf(taskId: string): string {
   return taskId.slice(taskId.indexOf(":") + 1);
 }
+
+/**
+ * 截止时间折算成瞬间。平台只写日期（`2026-11-17`）说的是「这天结束之前」，不是这天 00:00：
+ * 按午夜折算，用户在到期日几乎整天看到「已逾期」，今日到期一档那天永远不出现。
+ * 折算必须在 `normalize` 这一侧做完——进了七键，「只写日期」和「恰好午夜」就长得一样了。
+ * 各家带时刻的原始串仍走 `Date` 解析，行为与之前一致。
+ */
+export function toDueInstant(raw: string): string {
+  return DATE_ONLY.test(raw) ? `${raw}T23:59:59.000Z` : new Date(raw).toISOString();
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;

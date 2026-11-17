@@ -20,12 +20,13 @@ export function createSampleProviders(): Provider[] {
 
 /**
  * 样例卡的截止日按「打开面板这一天」算：写死日期会在展示那天全部变成逾期，
- * 三档理由里有两档就再也演示不出来。取当天 UTC 23:59，和 `ruleOf` 的 UTC 日界同一个口径。
+ * 三档理由里有两档就再也演示不出来。取的是访客本地的当天末尾——面板把本地偏移喂给了构建器，
+ * 按 UTC 日造数会在本地下午打开时把「今日到期」演示成明天早上。
  */
-function demoDue(utcDaysFromToday: number): string {
+function demoDue(daysFromToday: number): string {
   const day = new Date();
-  day.setUTCDate(day.getUTCDate() + utcDaysFromToday);
-  day.setUTCHours(23, 59, 59, 999);
+  day.setDate(day.getDate() + daysFromToday);
+  day.setHours(23, 59, 59, 999);
   return day.toISOString();
 }
 

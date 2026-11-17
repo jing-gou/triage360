@@ -120,8 +120,8 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
   // 为什么现在就把 dueAt 收进定稿：#6 要「逾期 / 今日到期置顶」，而核心层不许碰原始字段
   // （`docs/PRD.md:101`）。不在这里收，T04 只剩两条路——加第 8 个契约方法，或伸手进 raw。
   // GitHub 的 issue 自己没有截止时间，`due_on` 挂在 milestone 上且可为 null；
-  // Jira 的 `fields.duedate` 带 +0800。日期形式（不含时刻）的 duedate 怎么折算成「几点算到期」
-  // 属 #6 的判定，这里只做时间基准。
+  // Jira 的 `fields.duedate` 带 +0800。日期形式（不含时刻）的折算已由 #6 定在
+  // `toDueInstant`（当日 23:59），这里只做时间基准。
   const http = fakeHttp({
     github: {
       view: [

@@ -10,6 +10,12 @@ export interface TodayListDeps {
    * 跨轮状态由调用方保管：provider 与构建器都不落盘，也不从别处读。
    */
   previous?: readonly Task[];
+  /**
+   * 访客相对 UTC 的分钟偏移（UTC+8 是 480），用来把「今日」判成访客日历里的今天。
+   * 省略即 UTC 日界。构建器不自己读宿主时区：那样同一个输入在 CI（TZ=UTC）
+   * 与用户浏览器里会判出两种顺序，门内绿的正是线上错的。
+   */
+  zoneOffsetMinutes?: number;
 }
 
 export interface TodayList {
@@ -31,10 +37,13 @@ export interface ListEntry {
  * 命中规则的标识，不是句子。#8「为什么是这几条」与界面措辞要的是这个标识，
  * 分数留给 #10 学习加权再加——现在没有规则需要它。
  */
-export type RuleId = "overdue" | "dueToday" | "recentUpdate";
+export type RuleId = "overdue" | "dueToday" | "noDeadline" | "dueLater";
 
-/** 档位表：谁排在谁前面。顺序只由这张表和档内比较决定，规则本身不写数字。 */
-const RANK: Record<RuleId, number> = { overdue: 0, dueToday: 1, recentUpdate: 2 };
+/**
+ * 档位表：谁排在谁前面。顺序只由这张表和档内比较决定，规则本身不写数字。
+ * `noDeadline` 与 `dueLater` 同档：它们只是「为什么不在今天」的两个原因，不代表两种紧急度。
+ */
+const RANK: Record<RuleId, number> = { overdue: 0, dueToday: 1, noDeadline: 2, dueLater: 2 };
 
 /**
  * seam 1「今日清单构建器」：取数 → 归一 → 收敛 → 打分。
@@ -46,40 +55,54 @@ export async function buildTodayList({
   now,
   scope,
   previous = [],
+  zoneOffsetMinutes,
 }: TodayListDeps): Promise<TodayList> {
   const batches = await Promise.all(providers.map((provider) => buildOne(provider, http, scope, previous)));
 
   // 打分（T04）先按规则分堆，堆内按最近有动静排。
   // normalize 已把各家时间统一成 UTC，字符串比较才成立；时钟只取一次，同一轮里不许变。
   const instant = now().toISOString();
-  const entries = batches.flat().map((task) => ({ task, reason: ruleOf(task, instant) }));
+  const entries = batches
+    .flat()
+    .map((task) => ({ task, reason: ruleOf(task, instant, zoneOffsetMinutes) }));
   // 末位按 id 破平：档位与更新时间都相同的那些条目不能由 provider 返回的数组顺序决定，
   // 那个顺序不属于本应用（T05 合并四家之后更明显）。
   entries.sort(
     (a, b) =>
-      RANK[a.reason] - RANK[b.reason] ||
-      b.task.updatedAt.localeCompare(a.task.updatedAt) ||
-      a.task.id.localeCompare(b.task.id),
+      RANK[a.reason] - RANK[b.reason] || byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id),
   );
 
   return { generatedAt: instant, entries };
 }
 
 /**
- * 这条排在这里是哪条规则决定的。没有截止时间的条目走 `recentUpdate`。
- * 「今日」取 UTC 日历日同一天，不是「未来 24 小时内」：构建器只有一个 instant，
- * 想知道用户本地的今天还得再喂一个时区进来，那是另一个输入。
- * 今天但已过去的时刻算逾期，所以先比 `dueAt < instant` 再比日。
+ * 这条排在这里是哪条规则决定的。第三档有两个标识：压根没写截止，与截止在更晚的那天——
+ * 「最近更新」对后者是句假话，而 AC#2 要的就是原因本身。
+ * 逾期比的是瞬间，与时区无关；「今日」比的才是日界，所以它需要知道访客在哪一天。
+ * 先比瞬间再比日：今天但已经过去的时刻算逾期，不算今日到期。
+ * 不是「未来 24 小时内」：那是时长，不是日历日。
  */
-function ruleOf(task: Task, instant: string): RuleId {
-  if (task.dueAt === undefined) return "recentUpdate";
+function ruleOf(task: Task, instant: string, zoneOffsetMinutes?: number): RuleId {
+  if (task.dueAt === undefined) return "noDeadline";
   if (task.dueAt < instant) return "overdue";
-  return dayOf(task.dueAt) === dayOf(instant) ? "dueToday" : "recentUpdate";
+  return dayOf(task.dueAt, zoneOffsetMinutes) === dayOf(instant, zoneOffsetMinutes) ? "dueToday" : "dueLater";
 }
 
-/** ISO 串的前十个字符 `YYYY-MM-DD` 就是它的 UTC 日。 */
-function dayOf(instant: string): string {
-  return instant.slice(0, 10);
+/**
+ * 一条瞬间落在哪一天。没有偏移就取它的 UTC 日（ISO 串的前十个字符）；
+ * 给了偏移先把墙上时间平移到访客那一侧，再取日。
+ */
+function dayOf(instant: string, zoneOffsetMinutes?: number): string {
+  if (zoneOffsetMinutes === undefined) return instant.slice(0, 10);
+  return new Date(Date.parse(instant) + zoneOffsetMinutes * 60_000).toISOString().slice(0, 10);
+}
+
+/**
+ * 比较用码位序，不用 `localeCompare`：id 里带 `:` `#` `/` 与大小写，
+ * ICU 给的顺序随宿主变，而今天这批 ASCII 样本还测不出来。
+ */
+function byCode(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 async function buildOne(
