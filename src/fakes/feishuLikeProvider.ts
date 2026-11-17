@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, uniformAuth, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 样例 provider：飞书在 v1 只做第四张样例卡，零真连代码（`docs/PRD.md` 的真实程度表）。
@@ -71,7 +71,7 @@ export function createFeishuSampleProvider(): Provider {
     },
 
     scopeDescriptor(scope) {
-      return `样例数据 · 指派给 ${scope.assignee}`;
+      return uniformAuth(`样例数据 · 指派给 ${scope.assignee}`);
     },
   };
 }

@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, dueFrom, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, dueFrom, uniformAuth, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 假 provider：按 Jira Cloud REST v3 的形状构造请求并解析响应，数据来自注入的源站替身。
@@ -68,7 +68,7 @@ export function createJiraLikeProvider(): Provider {
     },
 
     scopeDescriptor(scope) {
-      return `样例站点 · 指派给 ${scope.assignee}`;
+      return uniformAuth(`样例站点 · 指派给 ${scope.assignee}`);
     },
   };
 }

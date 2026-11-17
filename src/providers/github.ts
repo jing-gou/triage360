@@ -100,7 +100,16 @@ export function createGithubProvider(): Provider {
     },
 
     scopeDescriptor(scope) {
-      return `指派给 ${scope.assignee}`;
+      return {
+        range: `指派给 ${scope.assignee}`,
+        auth: {
+          kind: "tiered",
+          tiers: [
+            { tier: "public", label: "只读公开仓库" },
+            { tier: "private", label: "包含私有仓库" },
+          ],
+        },
+      };
     },
   };
 }
