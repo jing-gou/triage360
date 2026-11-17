@@ -1,10 +1,21 @@
 :root {
   color-scheme: light;
-  --ink: #1a1a1a;
-  --muted: #6b7280;
-  --line: #e5e7eb;
+  --site-bg: #fafafa;
+  --site-fg: #1a1a1a;
+  --site-accent: #1a1a1a;
+  --site-on-accent: #fff;
+  --site-surface: #fff;
+  --site-muted: #6b7280;
+  --site-border: #e5e7eb;
+  --site-font: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  --site-radius: 10px;
+  --site-space: 1;
+  --site-type: 1;
+  --ink: var(--site-fg);
+  --muted: var(--site-muted);
+  --line: var(--site-border);
   --alert: #b42318;
-  --bg: #fafafa;
+  --bg: var(--site-bg);
 }
 
 * {
@@ -13,21 +24,22 @@
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  background: var(--site-bg);
+  color: var(--site-fg);
+  font-family: var(--site-font);
   -webkit-font-smoothing: antialiased;
 }
 
 .panel {
   max-width: 720px;
   margin: 0 auto;
-  padding: 40px 20px 72px;
+  padding: calc(40px * var(--site-space, 1)) calc(20px * var(--site-space, 1))
+    calc(72px * var(--site-space, 1));
 }
 
 .panel-title {
-  margin: 0 0 20px;
-  font-size: 20px;
+  margin: 0 0 calc(20px * var(--site-space, 1));
+  font-size: calc(20px * var(--site-type, 1));
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -47,18 +59,19 @@ body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: calc(10px * var(--site-space, 1));
   counter-reset: card;
 }
 
 .card {
   position: relative;
-  background: #fff;
-  border: 1px solid var(--line);
+  background: var(--site-surface);
+  border: 1px solid var(--site-border);
   /* 左边框常态就占 3px：理由档位靠换色强调，靠加宽度会把卡片文字推歪。 */
   border-left-width: 3px;
-  border-radius: 10px;
-  padding: 14px 16px 13px 44px;
+  border-radius: var(--site-radius);
+  padding: calc(14px * var(--site-space, 1)) calc(16px * var(--site-space, 1))
+    calc(13px * var(--site-space, 1)) calc(44px * var(--site-space, 1));
   /* 卡片整张可拖。抓手光标是它唯一的常驻提示：不上手柄、不加说明行，否则常态就不安静了。 */
   cursor: grab;
 }
@@ -86,16 +99,16 @@ body {
   position: absolute;
   /* 绝对定位的 containing block 是 padding box，所以左边框从 1px 变 3px 会把序号
      往右推 2px——补偿落在 padding 上只稳住了标题，这里得自己减回去。 */
-  left: 15px;
-  top: 15px;
-  color: var(--muted);
+  left: calc(15px * var(--site-space, 1));
+  top: calc(15px * var(--site-space, 1));
+  color: var(--site-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .card-title {
-  color: var(--ink);
-  font-size: 15px;
+  color: var(--site-fg);
+  font-size: calc(15px * var(--site-type, 1));
   font-weight: 500;
   text-decoration: none;
 }
@@ -105,17 +118,17 @@ body {
 }
 
 .card-meta {
-  margin: 5px 0 0;
-  color: var(--muted);
-  font-size: 12px;
+  margin: calc(5px * var(--site-space, 1)) 0 0;
+  color: var(--site-muted);
+  font-size: calc(12px * var(--site-type, 1));
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: calc(8px * var(--site-space, 1));
 }
 
 .card-source {
-  color: var(--ink);
+  color: var(--site-fg);
   font-weight: 500;
 }
 
@@ -144,7 +157,7 @@ a.card-source:hover {
 }
 
 .card--dueToday {
-  border-left-color: var(--ink);
+  border-left-color: var(--site-accent);
 }
 
 .card--overdue .card-reason {
@@ -153,7 +166,7 @@ a.card-source:hover {
 }
 
 .card--dueToday .card-reason {
-  color: var(--ink);
+  color: var(--site-accent);
   font-weight: 500;
 }
 
@@ -165,38 +178,39 @@ a.card-source:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: calc(20px * var(--site-space, 1));
 }
 
 .notice {
   max-width: 460px;
-  background: #fff;
-  border-radius: 12px;
-  padding: 22px 24px 18px;
+  background: var(--site-surface);
+  border-radius: calc(var(--site-radius) + 2px);
+  padding: calc(22px * var(--site-space, 1)) calc(24px * var(--site-space, 1))
+    calc(18px * var(--site-space, 1));
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
 }
 
 .notice-title {
-  margin: 0 0 10px;
-  font-size: 16px;
+  margin: 0 0 calc(10px * var(--site-space, 1));
+  font-size: calc(16px * var(--site-type, 1));
   font-weight: 600;
 }
 
 .notice-body {
-  margin: 0 0 10px;
-  color: var(--ink);
-  font-size: 14px;
+  margin: 0 0 calc(10px * var(--site-space, 1));
+  color: var(--site-fg);
+  font-size: calc(14px * var(--site-type, 1));
   line-height: 1.65;
 }
 
 .notice-close {
-  margin-top: 4px;
-  padding: 6px 14px;
-  background: var(--ink);
-  color: #fff;
+  margin-top: calc(4px * var(--site-space, 1));
+  padding: calc(6px * var(--site-space, 1)) calc(14px * var(--site-space, 1));
+  background: var(--site-accent);
+  color: var(--site-on-accent);
   border: 0;
-  border-radius: 8px;
+  border-radius: calc(var(--site-radius) - 2px);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--site-type, 1));
   cursor: pointer;
 }
