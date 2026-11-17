@@ -16,6 +16,12 @@ export interface TodayListDeps {
    * 与用户浏览器里会判出两种顺序，门内绿的正是线上错的。
    */
   zoneOffsetMinutes?: number;
+  /**
+   * 「这两条任务是不是同一件事」的判定策略，跨平台合并（#7）的唯一入口。
+   * 省略即不合并：宁可在清单上看见两张卡，也不在没有任何判据时把两条不同的事折成一条。
+   * 构建器不自己写判据——标题相似度是 #18 的语义匹配要买的东西，写死在这里就等于宣布它不需要了。
+   */
+  sameEvent?: SameEvent;
 }
 
 export interface TodayList {
@@ -31,7 +37,16 @@ export interface TodayList {
 export interface ListEntry {
   task: Task;
   reason: RuleId;
+  /**
+   * 这张卡合成自哪几条原始记录，只在真的合并过时存在，第一条就是 `task`。
+   * 和 `reason` 同一个理由：来源集合是构建器这一侧的结论，八键不因合并而长。
+   * #8 的「为什么是这几条」与界面上的逐个跳转都读它。
+   */
+  mergedFrom?: readonly Task[];
 }
+
+/** 「这两条是不是同一件事」：#18 的语义匹配与 #7 的判定表都实现这一个签名。 */
+export type SameEvent = (a: Task, b: Task) => boolean;
 
 /**
  * 命中规则的标识，不是句子。#8「为什么是这几条」与界面措辞要的是这个标识，
@@ -56,6 +71,7 @@ export async function buildTodayList({
   scope,
   previous = [],
   zoneOffsetMinutes,
+  sameEvent,
 }: TodayListDeps): Promise<TodayList> {
   const batches = await Promise.all(providers.map((provider) => buildOne(provider, http, scope, previous)));
 
@@ -72,7 +88,24 @@ export async function buildTodayList({
       RANK[a.reason] - RANK[b.reason] || byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id),
   );
 
-  return { generatedAt: instant, entries };
+  return { generatedAt: instant, entries: mergeDuplicates(entries, sameEvent) };
+}
+
+/**
+ * 跨平台重复项合并（#7）：按已经排好的顺序走一遍，每条先看能不能并进某个已开卡片的表头。
+ * 顺序放在打分之后带来两个不用另外规定的结果：表头天然站在这一组最紧急的档位上
+ * （并卡不会把逾期折成今日到期），而谁当表头只由档位与更新时间决定，与 provider 返回的数组顺序无关。
+ * 判定只拿表头比：`sameEvent` 说的是「这两条是不是同一件事」，一组对外由表头代表。
+ */
+function mergeDuplicates(entries: ListEntry[], sameEvent?: SameEvent): ListEntry[] {
+  if (sameEvent === undefined) return entries;
+  const groups: ListEntry[] = [];
+  for (const entry of entries) {
+    const home = groups.find((head) => sameEvent(head.task, entry.task));
+    if (home === undefined) groups.push(entry);
+    else home.mergedFrom = [...(home.mergedFrom ?? [home.task]), entry.task];
+  }
+  return groups;
 }
 
 /**
@@ -107,8 +140,13 @@ function dayOf(instant: string, zoneOffsetMinutes?: number): string {
 }
 
 /**
- * 比较用码位序，不用 `localeCompare`：id 里带 `:` `#` `/` 与大小写，
- * ICU 给的顺序随宿主变，而今天这批 ASCII 样本还测不出来。
+ * 比较用码位序，不用 `localeCompare`：id 里带 `:` `#` `/` 与大小写。
+ * `localeCompare` 默认按语言环境排序——标点被当可有可无、大小写差异在三级权重上被重新解释，
+ * 结果随宿主 locale 变。`byCode` 依赖的是 TS/JS 字符串 `<`：UTF-16 码元序列，不是码点序列——
+ * 对纯 ASCII 两者重合，只有码点落到 BMP 之外（增补平面，比如 emoji）时码元序与码位序才分家。
+ * id 由 `${providerId}:${remoteId}` 拼成（provider.ts:76-82），仓库名允许 BMP 外字符时会翻顺序；
+ * 这里的序只在仓库内比较，没有跨轮语义。
+ * 今天这批 ASCII 样本测不出两种序的差别，所以这条是措辞纪律，不是待修的缺陷。
  */
 function byCode(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
