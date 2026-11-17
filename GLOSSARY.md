@@ -9,7 +9,7 @@
 - **理由标识（`reason`，类型 `RuleId`）** — 命中哪条打分规则，取值 `overdue` / `dueToday` / `noDeadline` / `dueLater`。后两个同档：它们只是「为什么不在今天」的两个原因，不是两种紧急度。它是标识不是句子：措辞属界面与 #8，分数留给 #10。
 - **任务卡（Card）** — 今日清单里一条任务在界面上的呈现。
 - **来源角标（Source Corner）** — 右下角角标里列出本轮接线的平台名与生成时间的那一行。ticket 里的「Jira 卡 / 飞书卡」指带来源名的**任务卡**，不是它。
-- **构建器（`buildTodayList`）** — seam 1。输入只有 providers、注入的取数通道、注入的时钟、范围、上一轮的任务集合、注入的访客时区偏移；除此之外没有第二种信息来源。
+- **构建器（`buildTodayList`）** — seam 1。输入只有 providers、注入的取数通道、注入的时钟、范围、上一轮的任务集合、注入的访客时区偏移、注入的**同一件事**判定器；除此之外没有第二种信息来源。
 - **访客日历日** — 「今日到期」判的是哪一天：把瞬间平移到注入的 `zoneOffsetMinutes` 那一侧再取日；省略该输入就是 UTC 日。构建器自己不读宿主时区——读了，同一个输入在 CI 与浏览器里就会判出两种顺序。带时刻的截止（`duePrecision: "instant"`）才走这次平移；只写日期的（`"day"`）源站已经把日子写死了，再平移一次会把它推到相邻日。注入的是**偏移**不是**时区**：一个数字管整轮，夏令时换日之后、截止落在换日另一侧的条目会偏一小时（ADR-0005）。
 - **轮次（Round）** — 一次 `buildTodayList` 调用。跨轮状态由调用方保管：构建器读 `previous`，自己不落盘，provider 也不记上一轮。
 - **provider** — 一个平台的适配器，实现七法契约：`search` / `getByIds` / `normalize` / `doneStates` / `deletedStates` / `pollIntervalMs` / `scopeDescriptor`。
