@@ -31,8 +31,9 @@ function ge(number: number, title: string, updated_at: string) {
 }
 
 /**
- * 12 条：两家各 6 条。313 与 901 措辞相似而不同（是同一件事），902 与 314 完全同名（不是同一件事）——
- * AC#1 要的「重复的两条」与 AC#3 要的「同名但确属不同事件」各有一对，都在这一份数据里。
+ * 12 条：两家各 6 条。登记的同一件事有两对：906「登录页 500」与 315「Login 接口偶发 500」是票面 AC#3
+ * 前半句点名的那一对字面（措辞相似而不同），901「修复登录回调」与 313「回调地址改名后失效」差得更远，
+ * 测的是接入点不随字面距离变化。902 与 314 完全同名而判定器说不是同一件事——那是 AC#3 的后半句。
  */
 const GITHUB = [
   gh(901, "修复登录回调", "2026-11-16T10:00:00Z"),
@@ -40,7 +41,7 @@ const GITHUB = [
   gh(903, "整理提交材料", "2026-11-16T08:00:00Z"),
   gh(904, "补监控面板", "2026-11-16T07:00:00Z"),
   gh(905, "清理过期构建产物", "2026-11-16T06:00:00Z"),
-  gh(906, "对接第三方登录", "2026-11-16T05:00:00Z"),
+  gh(906, "登录页 500", "2026-11-16T05:00:00Z"),
 ];
 
 const GITEE = [
@@ -56,7 +57,10 @@ const GITEE = [
  * 「是不是同一件事」的答案表——来源侧的 worked example，测试不重新推导它。
  * 判定器本身长什么样是 #18 的事；这张卡要定的是判定器接入的位置与合并的结果形状。
  */
-const SAME_EVENT: readonly [string, string][] = [["github:901", "gitee:jing-gou/legacy-importer#313"]];
+const SAME_EVENT: readonly [string, string][] = [
+  ["github:901", "gitee:jing-gou/legacy-importer#313"],
+  ["github:906", "gitee:jing-gou/legacy-importer#315"],
+];
 
 /** 把成对登记的答案变成判定器：除了查表，不做任何自己的判断。 */
 function table(peers: readonly [string, string][]): SameEvent {
@@ -76,22 +80,43 @@ function deps() {
 }
 
 describe("seam 1 · 跨平台重复项合并", () => {
-  it("注入的判定器说其中两条是同一件事：12 条输入产出 11 张卡", async () => {
+  it("注入的判定器说两对是同一件事：12 条输入产出 10 张卡", async () => {
     const list = await buildTodayList(deps());
 
-    expect(list.entries).toHaveLength(11);
+    expect(list.entries).toHaveLength(10);
+  });
+
+  it("措辞相似而不同的两条并成一张：卡片用表头的标题，来源仍是两条", async () => {
+    const list = await buildTodayList(deps());
+
+    // 票面 AC#3 前半句点名的字面对：GitHub 的「登录页 500」与 Gitee 的「Login 接口偶发 500」。
+    // 标题一个字都不相同，构建器照并——判据来自注入，不来自字面比较（#18 换真判据时这里不动）。
+    const card = list.entries.find((entry) => entry.task.id === "gitee:jing-gou/legacy-importer#315");
+
+    expect(card?.task.title).toBe("Login 接口偶发 500");
+    expect(card?.mergedFrom?.map((task) => task.id)).toEqual([
+      "gitee:jing-gou/legacy-importer#315", // 表头：两条里最近更新的那条
+      "github:906",
+    ]);
   });
 
   it("合并卡带着全部来源，每个来源保留自己的链接", async () => {
     const list = await buildTodayList(deps());
 
-    // 表头取更新时间更近的那条：Gitee 的 313 比 GitHub 的 901 晚有动静，卡片就用它的标题与档位，
-    // 但两条链接都还在 mergedFrom 里，谁都没被丢掉。
-    const merged = list.entries.find((entry) => entry.mergedFrom !== undefined);
-    expect(merged?.task.id).toBe("gitee:jing-gou/legacy-importer#313");
-    expect(merged?.mergedFrom?.map((task) => task.url)).toEqual([
+    // 两张合并卡一起看：表头取这一组里最近更新的那条，所以 313（11:00）在 901（10:00）之前，
+    // 315（08:30）在 906（05:00）之前；两条 url 都还在 mergedFrom 里，谁都没被丢掉。
+    const merged = list.entries.filter((entry) => entry.mergedFrom !== undefined);
+    expect(merged.map((entry) => entry.task.id)).toEqual([
+      "gitee:jing-gou/legacy-importer#313",
+      "gitee:jing-gou/legacy-importer#315",
+    ]);
+    expect(merged[0]?.mergedFrom?.map((task) => task.url)).toEqual([
       "https://gitee.com/jing-gou/legacy-importer/issues/313",
       "https://github.com/jing-gou/triage360/issues/901",
+    ]);
+    expect(merged[1]?.mergedFrom?.map((task) => task.url)).toEqual([
+      "https://gitee.com/jing-gou/legacy-importer/issues/315",
+      "https://github.com/jing-gou/triage360/issues/906",
     ]);
   });
 
@@ -123,7 +148,22 @@ describe("seam 1 · 跨平台重复项合并", () => {
       http: fakeHttp({ github: { view: [...GITHUB].reverse() }, gitee: { view: [...GITEE].reverse() } }),
     };
 
-    expect((await buildTodayList(flipped)).entries).toEqual((await buildTodayList(deps())).entries);
+    const both = [await buildTodayList(flipped), await buildTodayList(deps())];
+    expect(both[0]?.entries).toEqual(both[1]?.entries);
+    // 字面锚点：只把两次实跑互比，「两边一起坏」（比如表头选取换成了数组位置）照样绿。
+    // 期望值按口径手推：同档内 updatedAt 新者在前，表头即该组最先出现的那条，组按出现顺序排。
+    expect(both[1]?.entries.map((entry) => [entry.task.id, entry.mergedFrom?.length ?? 1])).toEqual([
+      ["gitee:jing-gou/legacy-importer#313", 2], // 11:00，带着 github:901
+      ["gitee:jing-gou/legacy-importer#314", 1],
+      ["github:902", 1], // 与 314 同名而不同事，各自成卡
+      ["gitee:jing-gou/legacy-importer#315", 2], // 08:30，带着 github:906
+      ["github:903", 1],
+      ["gitee:jing-gou/legacy-importer#316", 1],
+      ["github:904", 1],
+      ["gitee:jing-gou/legacy-importer#317", 1],
+      ["github:905", 1],
+      ["gitee:jing-gou/legacy-importer#318", 1],
+    ]);
   });
 });
 
