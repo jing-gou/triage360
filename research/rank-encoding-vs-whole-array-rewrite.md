@@ -204,7 +204,25 @@ Rank Status 属性原句：
 
 输出中 `items` 连线的 args 为 `after / before / first / last / orderBy: ProjectV2ItemOrder / archivedStates: [ProjectV2ItemArchivedState!] / query: String`——即过滤与排序入口都在连线上，`ProjectV2` 本身没有位置字段。（另：同一输出确认 `archivedStates` 参数存在，与第 4 节「归档后的陈旧项」维度相关。）
 
-诚实边界：以上全部是 **schema introspection**，不是对某个真实 project 做读写实验；因此「`afterId` 为 null 表示移到顶部」「一次拖拽实际改写服务端几条记录」这类**行为语义**在官方 schema 的 introspection 里取不到，属未核实（配方见「待核实」）。GitHub 公开的 GraphQL schema 文本（`octokit/graphql-schema` 等镜像）**未使用**，避免以镜像代替实测。
+诚实边界：以上全部是 **schema introspection**，不是对某个真实 project 做读写实验；因此「一次拖拽实际改写服务端几条记录」这类**写侧代价**在 introspection 里取不到，属未核实（配方见「待核实」）。GitHub 公开的 GraphQL schema 文本（`octokit/graphql-schema` 等镜像）**未使用**，避免以镜像代替实测。
+
+**命令 3-E —— 补上字段描述（主会话 2026-11-17 复核，本节 3-C 的命令只选了 `name type`，没带 `description`，所以那句话的证据当时不在本节）**
+
+```bash
+export HTTPS_PROXY=http://localhost:7890
+"C:/Program Files/GitHub CLI/gh.exe" api graphql -f query='{ __type(name: "UpdateProjectV2ItemPositionInput") { inputFields { name description } } }' --jq '.data.__type.inputFields[] | "\(.name): \(.description)"'
+```
+
+原样输出：
+
+```text
+clientMutationId: A unique identifier for the client performing the mutation.
+projectId: The ID of the Project.
+itemId: The ID of the item to be moved.
+afterId: The ID of the item to position this item after. If omitted or set to null the item will be moved to top.
+```
+
+→ 这条把「`afterId` 为 null 表示移到顶部」从**未核实**升到**一手**：它是 GitHub schema 自带的字段描述，不是行为实验，但说话的人是 GitHub 自己。仍然未核实的是写侧代价（一条被移动的 item 会连带改写几条记录）。
 
 ### 3.2 Linear —— 实测结论：**schema 里既可读又可写 `sortOrder: Float!`，且官方描述里自己写了「插中间=取邻居中间值」与「Linear 会自行调整位置以避免碰撞」**
 
