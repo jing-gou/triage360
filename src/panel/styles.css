@@ -100,6 +100,15 @@ body {
   font-weight: 500;
 }
 
+/* 合并卡的来源格是真链接：常态不带下划线，悬停才出现，与标题同一套约定。 */
+a.card-source {
+  text-decoration: none;
+}
+
+a.card-source:hover {
+  text-decoration: underline;
+}
+
 .card-sample {
   padding: 1px 6px;
   border: 1px solid var(--line);
