@@ -22,6 +22,12 @@ export interface TodayListDeps {
    * 构建器不自己写判据——标题相似度是 #18 的语义匹配要买的东西，写死在这里就等于宣布它不需要了。
    */
   sameEvent?: SameEvent;
+  /**
+   * 访客手动排过的顺序：卡片标识（合并卡的表头 id）按他留下的次序排好。
+   * 排在这个表里的卡一律在前面，其余按规则打分跟在后面——手动那一票优先于档位（ADR-0007）。
+   * 省略即完全按规则排。构建器不自己读浏览器存储：那样同一份输入在 CI 与访客浏览器里会排成两种顺序。
+   */
+  manualOrder?: readonly string[];
 }
 
 export interface TodayList {
@@ -61,7 +67,7 @@ export type RuleId = "overdue" | "dueToday" | "noDeadline" | "dueLater";
 const RANK: Record<RuleId, number> = { overdue: 0, dueToday: 1, noDeadline: 2, dueLater: 2 };
 
 /**
- * seam 1「今日清单构建器」：取数 → 归一 → 收敛 → 打分。
+ * seam 1「今日清单构建器」：取数 → 归一 → 收敛 → 打分 → 手动那一票。
  * 每个 provider 每轮一个 search，外加至多一次按 id 批量取回。
  */
 export async function buildTodayList({
@@ -72,6 +78,7 @@ export async function buildTodayList({
   previous = [],
   zoneOffsetMinutes,
   sameEvent,
+  manualOrder,
 }: TodayListDeps): Promise<TodayList> {
   const batches = await Promise.all(providers.map((provider) => buildOne(provider, http, scope, previous)));
 
@@ -88,7 +95,28 @@ export async function buildTodayList({
       RANK[a.reason] - RANK[b.reason] || byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id),
   );
 
-  return { generatedAt: instant, entries: mergeDuplicates(entries, sameEvent) };
+  return { generatedAt: instant, entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder) };
+}
+
+/**
+ * 手动那一票（#9）：排在 `manualOrder` 里的卡按访客留下的次序在前，其余保持规则序跟在后面。
+ * 作用在合并**之后**：`manualOrder` 记的是界面上看得见的卡，而被并掉的那条已经不是卡了。
+ * 若放在合并之前，把某条来源排到最前会让它当上表头、连带把整张卡的档位改掉——ADR-0006 要守的正是那个。
+ * 代价记在 ADR-0007：界面一次落盘写的是整份可见顺序，所以那一次之后所有已有卡都在手动区里，
+ * 之后新变成逾期的那条不会挤进来，它落在未排区的最前面。
+ */
+function applyManualOrder(entries: ListEntry[], manualOrder?: readonly string[]): ListEntry[] {
+  if (manualOrder === undefined) return entries;
+  const posOf = new Map(manualOrder.map((id, at) => [id, at] as const));
+  const placed: { entry: ListEntry; at: number }[] = [];
+  const rest: ListEntry[] = [];
+  for (const entry of entries) {
+    const at = posOf.get(entry.task.id);
+    if (at === undefined) rest.push(entry);
+    else placed.push({ entry, at });
+  }
+  placed.sort((a, b) => a.at - b.at);
+  return [...placed.map(({ entry }) => entry), ...rest];
 }
 
 /**

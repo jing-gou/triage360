@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Provider, Scope } from "../core/provider";
 import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
+import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrder } from "./manual-order";
 
 const scope: Scope = { assignee: "me" };
 const providers: Provider[] = createSampleProviders();
@@ -29,8 +30,17 @@ const REASON_LABELS: Record<RuleId, string> = {
   dueLater: "未到截止日",
 };
 
+/** 首次主动排序后要说的话：动了哪一条、从第几位到第几位。 */
+interface OrderNotice {
+  title: string;
+  from: number;
+  to: number;
+}
+
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
+  const [notice, setNotice] = useState<OrderNotice | null>(null);
+  const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -44,6 +54,8 @@ export function App() {
       zoneOffsetMinutes,
       // 演示用判定表：真实判据在 #18，接进来的是同一个注入点，不是另一套逻辑。
       sameEvent: demoSameEvent,
+      // 上一轮排的顺序在这里回到构建器：存储归界面管，构建器只认注入（ADR-0007）。
+      manualOrder: loadManualOrder(),
     }).then((next) => {
       if (alive) setList(next);
     });
@@ -51,6 +63,27 @@ export function App() {
       alive = false;
     };
   }, []);
+
+  /**
+   * 把第 `from` 张卡挪到第 `to` 张的位置：落点用目标原来的序号，向上向下两侧读起来都直观。
+   * 写进去的是**整份**可见顺序，所以这一次拖拽之后所有已有卡片都归访客，规则只对新条目说话（ADR-0007）。
+   */
+  function move(from: number, to: number): void {
+    if (list === null || from === to) return;
+    const moved = list.entries[from];
+    if (moved === undefined) return;
+    const rest = list.entries.filter((_, index) => index !== from);
+    rest.splice(to, 0, moved);
+    setList({ ...list, entries: rest });
+    saveManualOrder(rest.map((entry) => entry.task.id));
+    // 标记要等这句话真被看过才落盘：没关就刷新，下一次拖拽还会说一遍。
+    if (!hasSeenOrderNotice()) setNotice({ title: moved.task.title, from, to });
+  }
+
+  function dismissNotice(): void {
+    markOrderNoticeSeen();
+    setNotice(null);
+  }
 
   if (!list) {
     return <main className="panel" />;
@@ -63,15 +96,45 @@ export function App() {
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
       <ol className="cards">
-        {list.entries.map(({ task, reason, mergedFrom }) => {
+        {list.entries.map(({ task, reason, mergedFrom }, index) => {
           // 合并卡的来源槽一格一个来源，各自跳到各自的记录；没合并的卡片 DOM 不变。
           const sources = mergedFrom ?? [task];
           const samples = [
             ...new Set(sources.map((one) => SOURCE_LABELS[one.providerId]?.sample).filter((one) => one !== undefined)),
           ];
+          // 落点线画在目标的上沿还是下沿，取决于这张卡是往上拖还是往下拖。
+          const dropClass =
+            drag === null || drag.over !== index || drag.from === index
+              ? ""
+              : drag.from < index
+                ? " card--dropAfter"
+                : " card--dropBefore";
           return (
-            <li className={`card card--${reason}`} key={task.id}>
-              <a className="card-title" href={task.url}>
+            <li
+              className={`card card--${reason}${drag?.from === index ? " card--dragging" : ""}${dropClass}`}
+              key={task.id}
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                setDrag({ from: index, over: index });
+              }}
+              onDragOver={(event) => {
+                if (drag === null) return;
+                // 不拦住浏览器的「不能放这里」，否则 drop 永远不触发。
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                if (drag.over !== index) setDrag({ ...drag, over: index });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (drag !== null) move(drag.from, index);
+                setDrag(null);
+              }}
+              onDragEnd={() => setDrag(null)}
+            >
+              {/* 卡片本身是拖拽源：链接上的 draggable=false 让指针落在标题上时也从整张卡起手，
+                  点击跳转不受影响（拖与点是两个手势）。 */}
+              <a className="card-title" href={task.url} draggable={false}>
                 {task.title}
               </a>
               <p className="card-meta">
@@ -83,7 +146,7 @@ export function App() {
                       {label}
                     </span>
                   ) : (
-                    <a className="card-source" href={one.url} key={one.id}>
+                    <a className="card-source" href={one.url} draggable={false} key={one.id}>
                       {label}
                     </a>
                   );
@@ -116,6 +179,30 @@ export function App() {
           .join(" · ")}{" "}
         · {WALL_CLOCK.format(generatedAt)}
       </p>
+      {/* 只在第一次主动排序后出现，看过并关掉才落「已说过」的标记（AC#3）。 */}
+      {notice !== null && (
+        <div className="notice-mask" onClick={dismissNotice}>
+          <div className="notice" role="dialog" aria-modal="true" aria-labelledby="notice-title">
+            <h2 className="notice-title" id="notice-title">
+              这份顺序归你了
+            </h2>
+            <p className="notice-body">
+              你把「{notice.title}」从第 {notice.from + 1} 位放到了第 {notice.to + 1} 位。从现在起，这一屏的次序就按你排的走：
+              {""}
+              刷新之后卡片还在原位，规则打分不再挪动它们，只负责把新出现的条目按紧急度接在后面。
+            </p>
+            <p className="notice-body">
+              记下来的只有这些：每条的标识，和你把它放在第几位。标题、正文、评论都不在里面。它现在还只记顺序，
+              {""}
+              不会猜你想先做哪一类任务。
+            </p>
+            <p className="notice-body">这份顺序存在这台浏览器的本地存储里——换浏览器或清空站点数据，顺序回到规则打分。</p>
+            <button autoFocus className="notice-close" onClick={dismissNotice} type="button">
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
