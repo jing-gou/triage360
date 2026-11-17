@@ -46,9 +46,6 @@ interface StoreFile {
 /** 30 天未访问自动清除的射程：服务端这本条记录（含全部授权），不含浏览器本地。 */
 export const INACTIVITY_LIMIT_MS = 30 * 24 * 60 * 60_000;
 
-/** lastSeenAt 落盘的节流：轮询每 30 秒一次，账本没必要跟着写这么密。 */
-const SEEN_PERSIST_EVERY_MS = 60 * 60_000;
-
 export class EncryptedStore {
   private readonly key: Buffer;
   private readonly file: string;
@@ -98,19 +95,17 @@ export class EncryptedStore {
   }
 
   /**
-   * 按会话标识取租户并顺带续期 lastSeenAt。
-   * 30 天清除在这里也做一次惰性扫描：单进程、请求驱动的服务不另起定时器。
+   * 按会话标识取租户并顺带续期 lastSeenAt。续期立刻落盘、不节流：
+   * 它就是 30 天清除的判据，文件里的值落后于真实访问就可能提前删人。
+   * 30 天清除在这里也做一次惰性扫描；启动与每小时一次的扫描在 index.ts。
    */
   find(sessionId: string): Tenant | undefined {
     this.prune(this.now());
     const idHash = hashId(sessionId);
     const record = this.tenants.find((one) => one.idHash === idHash);
     if (record === undefined) return undefined;
-    const now = this.now();
-    if (now - record.lastSeenAt >= SEEN_PERSIST_EVERY_MS) {
-      record.lastSeenAt = now;
-      this.persist();
-    }
+    record.lastSeenAt = this.now();
+    this.persist();
     return this.materialize(record, sessionId);
   }
 
@@ -128,7 +123,7 @@ export class EncryptedStore {
 
   /**
    * 撤销 = 物理删除该租户 token 与该租户在服务端的全部数据，并**当场验证**：
-   * 从内存移除、整份重写文件、再把文件读回来确认那条哈希不在。验证不过就抛出去。
+   * 从内存移除、整份重写文件、再把文件读回来确认那条哈希不在。验证不过就返回 false。
    */
   delete(sessionId: string): boolean {
     this.dropTenant(sessionId);

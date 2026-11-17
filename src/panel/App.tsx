@@ -348,7 +348,7 @@ export function App() {
       {dialog === "consent" && (
         <Modal title="连接 GitHub 之前" onDismiss={() => setDialog(null)}>
           <p className="notice-body">
-            同意后跳到 GitHub 的授权页面。服务端会存：你的 GitHub 登录名、加密后的 access token、这次授权是哪一档、以及这条记录的创建与最近访问时间。
+            同意后跳到 GitHub 的授权页面。服务端会存：你的 GitHub 登录名、加密后的 access token、这次授权是哪一档、GitHub 实际授予的 scope、以及这条记录的创建与最近访问时间。
           </p>
           <p className="notice-body">
             token 只用来读指派给你、还没关闭的 issue 的标题、状态、更新时间与截止时间。正文、评论、diff、代码永不入库。
