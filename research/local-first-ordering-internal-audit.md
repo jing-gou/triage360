@@ -3,7 +3,7 @@ question: 仓库内口径审计——「手动排序是否走本地优先」这�
 date: 2026-11-17
 method: 只读仓库取证。所有引文用 Read 逐字取回并标 file:line；三条 ticket 原文用 gh CLI 从 issue tracker 直接取回，未改写
 status: 已逐条取到一手（仓库文件 + issue #9/#10/#13 的 body 原文）。仍未取到——#13/#10 是否存在仓库外补充评论、以及 main 上是否已有他人开的本地优先讨论——见「待核实」
-scope_note: 本文件不做决策，只把现状摊开。结论冲突点的严重度是取证者判的，不是仓库已认的
+related: [super-productivity-ordering-storage.md, browser-local-storage-durability.md, rank-encoding-vs-whole-array-rewrite.md]
 ---
 
 # 手动排序 · 本地优先的仓库内口径审计
@@ -23,14 +23,16 @@ scope_note: 本文件不做决策，只把现状摊开。结论冲突点的严�
 >
 > `docs/adr/` 实际文件：0001–0007 七份，**不存在 ADR-0008**（本文件也不新建）。
 >
-> 〔**主会话核对 2026-11-17**〕这句写完之后，同一个 PR 的第二个 commit `86b6c78` 确实新建了 `docs/adr/0008-manual-order-storage-location.md`——「不新建」约束的是这份审计自己的交付物，不是「0008 这个号永久留空」。0008 的状态是 **Proposed**：它只把 §C1–C3 那三处正面义务与两条路摊平，**没有替 owner 拍板存放位置**。另外 0008 引用的 `ADR-0007` 与 `src/panel/manual-order.ts` 都还在待批的 PR #31 上，main 上 `docs/adr/` 因此是 0001–0006 直接跳到 0008。
+> 〔**主会话核对 2026-11-17**〕上面那句「不存在 ADR-0008（本文件也不新建）」在同一支 PR 的下一个 commit `86b6c78` 就被自己推翻了：`docs/adr/0008-manual-order-storage-location.md` 确实建了。「不新建」约束的是这份审计自己的交付物，不是「0008 这个号永久留空」。0008 的状态是 **Proposed**——它只把 §C1–C3 那三处正面义务与两条路摊平，没有替 owner 拍板存放位置。它引用的 `ADR-0007` 与 `src/panel/manual-order.ts` 都还在待批的 PR #31 上，main 上的 `docs/adr/` 因此是 0001–0006 直接跳到 0008。
+>
+> 〔**读法与两处不可复现**〕本文件不做决策，只把现状摊开；冲突点（§3 的 C1–C6）的严重度是取证者判的，不是仓库已认的。另外 `.gitignore:10` 忽略了 `.scratch/`，所以本文件对 `.scratch/pr-body-t07.md` 的四段引用（`:22`、`:29-30`、`:49`、`:52`）**在合并后无法复现**——它们是 T07 那份 PR 正文的草稿。同一内容的持久副本在 tracker 上，配方：`export HTTPS_PROXY=http://localhost:7890 && "C:/Program Files/GitHub CLI/gh.exe" pr view 31 --repo jing-gou/triage360 --json body -q .body`。这条替 §待核实 3 与 5 里以 `.scratch/` 为证据的那两句配方说话。
 
 ## 结论摘要（TL;DR）
 
 1. **#9 的 AC 对「存在哪里」完全沉默**：它写的是「拖拽后顺序持久化，刷新页面仍在」——「刷新页面」是浏览器内的事件，localStorage 就够。所以本地优先不违反 #9，但 #9 也**没有批准**本地优先。
 2. **真正与本地存放正面相撞的是 #13 AC#4 与 #10 AC#5**，两句都是正面义务而不是「不做某事」：`30 天未访问自动清除，且覆盖排序记录`、`清除数据后加权消失（不留隐式记忆）`。现在这份 `localStorage` 设计让这两句在各自 ticket 落地当天变红。
 3. **`src/` 里没有任何清除排序的代码路径**。`grep -rn "撤销\|清除\|reset\|clear" src` 唯一命中是 `src/panel/styles.css:51` 的 `counter-reset: card;`（CSS 计数器，无关）。访客想让顺序回到规则序，只有「清空站点数据」这一条浏览器侧动作。
-4. **upstream 从未讨论过这件事**：`DECISIONS.md` 里 `同步 / 浏览器 / 本地存储 / 设备 / IndexedDB` 全部命中都与排序存放无关；`跨设备同步` 这个词在仓库里只出现两次——`docs/PRD.md:159`（Out of Scope）与 `docs/adr/0007-manual-order-injection.md:16`。**存放位置这个决策没进过决策树。**
+4. **upstream 从未讨论过这件事**：`DECISIONS.md` 里 `同步 / 浏览器 / 本地存储 / 设备 / IndexedDB` 全部命中都与排序存放无关；`跨设备同步` 这个词在**决策文档**（`DECISIONS.md` + `ADR-0001`–`0006`）里零命中，进仓库只经由两处——`docs/PRD.md:159`（Out of Scope）与 `docs/adr/0007-manual-order-injection.md:16`（在 PR #31 上）。**这句按文件类别数，不按全仓库字面计数**：本 PR 的审计笔记自己也复述了它 8 次，merge 后 `grep -rc 跨设备同步` 会给出 10，那不构成反驳。**存放位置这个决策没进过决策树。**
 5. **Out of Scope 那句能当「本地优先不欠功能」的依据，不能当「本地优先免删除义务」的依据**。「不做跨设备同步协议」推不出「排序记录不进服务端」，前者是砍功能、后者涉及数据边界，两句之间隔着的正是 #13/#10 那三条正面 AC。
 6. **有一条假设已经被现实推翻**：`ADR-0005:24` 与 `tests/today-list.test.ts:308` 都写「#9 会把跨轮快照落盘」，而 #9 落盘的是 id 字符串数组（`src/panel/manual-order.ts:41-43`），一个 `Task` 都不存。「快照存全八键」这条契约因此没有主人。
 7. **文档债集中在一处**：ADR-0007:16 自己记下了「两处要合上口径」，但这句话只活在 ADR 与 `.scratch/pr-body-t07.md:49` 里，**没有回到 `DECISIONS.md` / PRD**，也没有落成 #13 或 #10 票面上的一句交接。按 `AGENTS.md` 的写法则更糟：它既没归进 PR 正文的「刻意没处理」，也没变成 ticket 的交接句。
@@ -247,3 +249,13 @@ Notes 全文：`拖拽交互与视觉按 spec 走手工验收 + 截图，不写�
 - `git diff --stat origin/main...HEAD` → 7 files, 425 insertions(+), 7 deletions(-)
 - `git ls-tree --name-only origin/main:docs/adr` → 0001…0006（**无 0007**）；`origin/main:src/panel` → `App.tsx main.tsx styles.css`（**无 manual-order.ts**）
 - `git show --stat --oneline HEAD` → `adbab0a`，7 files
+
+### 非一手
+
+无。搜索引擎未使用；所有结论落在仓库文件与 tracker 原文上。唯一不属于「来源」的东西是 §3 各条的严重度分级（C1 最高 → C6 低），那是取证者的判断，没有任何文件这么说过。
+
+### 传输通道说明
+
+- `gh` 不在 agent shell 的 PATH，统一用绝对路径 `"C:/Program Files/GitHub CLI/gh.exe"`；GitHub 侧一律 `export HTTPS_PROXY=http://localhost:7890`。**代理不通时的「查不到」不等于「不存在」**，本文件的 tracker 结论全部是在代理可用、命令有原样返回的前提下写下的。未使用 `--show-token`，token 未打印。
+- 仓库文件用 Read 工具按绝对路径取；git 命令先 `cd` 到本仓库 worktree。委派会话的默认 cwd 可能是 `Documents/Qoder/2026-11-17/<id>` 那个镜像目录，它不是本仓库，行号与文件清单都会对不上。
+- 上面所有 `ADR-0007:*` 行号取自 `ticket/T07-drag-order` @ `adbab0a`（该文件 20 行，`:16` 与 `:20` 实测命中「跨设备同步本身在 spec 的 Out of Scope 里」与「现在定 schema 等于替它们决定形状」）。PR #31 的 head 若再变，这些行号要重新对。

@@ -1,9 +1,9 @@
 ---
 question: 浏览器本地存储作为「用户排过的顺序」的唯一副本，能承担多少（localStorage / IndexedDB / Storage API 的配额、异步代价、驱逐与过期规则）
 date: 2026-11-17
-阅读日期: 2026-11-17（本轮所有 URL 均为该日真实抓取，逐条标注证据等级）
-method: 只取一手来源——WHATWG 规格原文（html.spec.whatwg.org / storage.spec.whatwg.org）、MDN 官方文档、WebKit 官方博客与追踪防护政策页、web.dev（Google/Chrome 团队官方文档站）、Chromium 官方设计文档（Google Doc，作者为 Chromium 引擎工程师）。不含第三方博客。
+method: 只取一手来源——WHATWG 规格原文（html.spec.whatwg.org / storage.spec.whatwg.org）、MDN 官方文档、WebKit 官方博客与追踪防护政策页、web.dev（Google/Chrome 团队官方文档站）、Chromium 官方设计文档（Google Doc，作者为 Chromium 引擎工程师）。不含第三方博客。所有 URL 均为 date 那一天的真实抓取，逐条标注证据等级。
 status: localStorage/IndexedDB/Storage API 的配额与驱逐规则均已引一手原句；各引擎 localStorage 的**实测**上限与 Chrome 是否在存储压力下清 localStorage 列入「待核实」
+related: [super-productivity-ordering-storage.md, rank-encoding-vs-whole-array-rewrite.md, platform-limits-and-landing-form.md]
 ---
 
 # 浏览器本地存储作为排序唯一副本： durability 一手证据

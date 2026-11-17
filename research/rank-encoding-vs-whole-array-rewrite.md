@@ -314,7 +314,7 @@ curl -s -X POST https://api.linear.app/graphql -H 'Content-Type: application/jso
 
 ## 来源清单
 
-**一手（均为 2026-11-17 阅读，URL 为本轮真实取到）**
+### 一手（均为 2026-11-17 阅读，URL 为本轮真实取到）
 - https://confluence.atlassian.com/display/ADMINJIRASERVER0916/Managing+LexoRank —— rank 存为字符串、字符串随操作变长、128/160/254 三档阈值与 12 小时排程、"Balancing fields will distribute rank values evenly across specific buckets"、Rank Status 语义、marker rows 与 3 个桶、"Last modified on Jul 7, 2022"
 - https://support.atlassian.com/jira/kb/understanding-and-managing-lexorank-in-jira-server/ —— "Running a balance is similar to running a re-index of JIRA…"、"Current balancing can take quite a long time on larger instances"（JSWSERVER-13163）、"the balance cluster lock has been taken"、"A foreground re-index may be running. It is expected that this will disable balancing."、"Deleting these records will correct this problem (and also result in a loss of ranking data for those issues only)."、`varchar(255)` 修复 SQL
 - https://support.atlassian.com/jira/kb/lexorank-balancing-or-manual-ranking-of-issues-fails-in-jira/ —— "JIRA Agile cannot execute the rank operation at this time. Other users may be ranking the issues that you are trying to rank. Please try again later."、`Balancing rank row [type=ISSUE_RANK_ROW, oldRank=0|1026rk:, newRank=1|hzzzvz:]`、"already exists, retrying balance oepration"、"balance operation timed out"、collation 原句 + JSWSERVER-11178、三段桶计数 SQL
@@ -323,12 +323,12 @@ curl -s -X POST https://api.linear.app/graphql -H 'Content-Type: application/jso
 - https://api.crossref.org/works?query=lexorank&rows=3 → `"total-results":0`（本轮实测原样）
 - http://export.arxiv.org/api/query?search_query=all:lexorank&max_results=3 → 无 `<title>` 命中（本轮实测）
 
-**非一手（仅用于「站点归属」，未用于任何算法性质结论）**
+### 非一手（仅用于「站点归属」，未用于任何算法性质结论）
 - `tanjoshua/lexorank`、`Gkuber/lexorank`、`ThomsonTan/lexorank` 三个互不相关仓库的 README（`gh api repos/<owner>/<repo>/readme` 解码）逐字一致："The lexorank algorithm as implemented in JIRA (Atlassian) is described at https://lexorank.demaine.com/ and was designed by Erik Demaine"。**仅用于确认出处 URL 与作者**，其技术表述（"LexoRank algorithm provides an elegant solution to this problem by assigning each item a unique, lexicographically sortable string"）不作证据。`TristanWaddington/lexorank`、`kvandake/lexorank-ts` 的 `gh api …/readme` 本轮未返回内容，仓库名未复核。掘金/CSDN/DeepWiki 等转述一律未采信。
 - **搜索结果里出现的疑似镜像/克隆站（`1f750f5c…cdn.pinduplicate.com`、`www.nfnpngl.cn`、`116.62.16.121`）标题声称论文名为 `LexoRank: Lexicographic Ordering for Persistent Lists using String Manipulation`，本轮一律未采信、未抓取**——这些域名与 MIT 无任何可证关系，正文真伪未知。owner 若要用，需自行与 Demaine 官方渠道交叉核对。
 - 已失败的通道（写了就不算「不存在」）：`developer.atlassian.com/server/jira/platform/jira-lexoranking/` 404、`developer.atlassian.com/cloud/jira/agile/rest/v3/api-group-backlog/` 404、`confluence.atlassian.com/adminjiraserver0916/managing-lexorank-<推测pageId>.html` 404；`developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-backlog/` 取到正文但全文无 `rankBefore`，故 **Jira Cloud「rank 端点一次影响几条 issue」的官方表述本轮未取得**。
 
-**传输通道说明**
+### 传输通道说明
 - `gh` 不在 agent shell 的 PATH，统一用绝对路径 `"C:/Program Files/GitHub CLI/gh.exe"`；`gh auth status` 显示已登录 github.com（未使用 `--show-token`，token 未打印）。GitHub GraphQL、`api.linear.app`、CrossRef、arXiv 均**直连成功，未设代理**。`curl -s https://api.github.com/repos/<…>/readme` 返回 `000`（连接层被拒），但同一内容的 `gh api … --jq .content` 可用。
 - Demaine 通道（**全部为传输层结果，不含内容判定**）：`people.csail.mit.edu/demaine/` → WebFetch 与 curl 均 **403**（直连、`HTTPS_PROXY=http://localhost:7890` 皆同）；经 `https://r.jina.ai/https://people.csail.mit.edu/demaine/` **成功取到一次**导航文本（故标 [非一手-通道]）；`https://r.jina.ai/https://lexorank.demaine.com/` 后续两次请求（curl `000`、WebFetch "fetch failed"）均失败；`web.archive.org/cdx/…`、`archive.org/wayback/available` → curl **exit 28 超时**；`lexorank.demaine.com`、`www.demaine.com`、`lexorank.org` 直连 → `000`。
 - 设置 `HTTPS_PROXY=http://localhost:7890` 后重试 `people.csail.mit.edu` 仍 403，`demaine.com` / `lexorank.org` 返回 `000`（连接/DNS 层失败，非 404）。
