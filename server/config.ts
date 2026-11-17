@@ -10,6 +10,8 @@ export interface ServerConfig {
   appBaseUrl: string;
   /** 面板所在源（Qoder Sites），CORS 只放行它，同时是回调完成后的落地地址。 */
   frontendUrl: string;
+  /** 加密账本与密钥的目录；密钥与账本都只住这里，永不进仓库（#13）。 */
+  dataDir: string;
   github: { clientId: string; clientSecret: string };
 }
 
@@ -20,6 +22,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     port: Number(env.PORT ?? 8787),
     appBaseUrl: trimSlash(required(env, "APP_BASE_URL")),
     frontendUrl: trimSlash(required(env, "FRONTEND_URL")),
+    // 默认落在检出之外由部署脚本安排（DATA_DIR=/var/lib/triage360）；本地开发用 .data/（已 gitignore）。
+    dataDir: env.DATA_DIR ?? ".data",
     github: {
       clientId: required(env, "GITHUB_CLIENT_ID"),
       clientSecret: required(env, "GITHUB_CLIENT_SECRET"),

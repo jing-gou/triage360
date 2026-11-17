@@ -1,5 +1,6 @@
 import type { Http } from "../src/core/provider";
 import type { ServerConfig } from "./config";
+import type { Tier } from "./store";
 
 /**
  * GitHub OAuth 的一手形状（docs.github.com › Authorizing OAuth apps）：
@@ -13,14 +14,21 @@ import type { ServerConfig } from "./config";
 const AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
 
-/** 只碰公开仓库：ticket #11 的范围，私有仓库的那一档在 T12。 */
-const SCOPE = "public_repo";
+/**
+ * 公私两档（T12）：两次独立授权、两个 token 并存，官方 "Creating multiple tokens for OAuth apps"
+ * 背书这一形态。`repo` 本身包含公开仓库，所以取数优先用高档 token。
+ */
+const SCOPES: Record<Tier, string> = { public: "public_repo", private: "repo" };
 
-export function authorizeUrl(config: ServerConfig, state: string): string {
+export function isTier(value: string | null): value is Tier {
+  return value === "public" || value === "private";
+}
+
+export function authorizeUrl(config: ServerConfig, state: string, tier: Tier): string {
   const url = new URL(AUTHORIZE_URL);
   url.searchParams.set("client_id", config.github.clientId);
   url.searchParams.set("redirect_uri", `${config.appBaseUrl}/cb/github`);
-  url.searchParams.set("scope", SCOPE);
+  url.searchParams.set("scope", SCOPES[tier]);
   url.searchParams.set("state", state);
   return url.toString();
 }
@@ -53,19 +61,40 @@ export async function exchangeCode(
   return { accessToken: body.access_token };
 }
 
-/** 换到 token 后再问一次「你是谁」：用户可能在授权页换了账号。 */
-export async function fetchLogin(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<string> {
-  const res = await fetchImpl("https://api.github.com/user", { headers: apiHeaders(accessToken) });
-  if (!res.ok) throw new Error(`GitHub /user 返回 ${res.status}`);
-  const body = (await res.json()) as { login?: unknown };
-  if (typeof body.login !== "string") throw new Error("GitHub /user 没有给出 login");
-  return body.login;
+/** 真值只在响应头里：用户在 GitHub 侧把 `repo` 编辑成 `public_repo` 时，这里会诚实变少（T12）。 */
+function parseScopes(header: string): string[] {
+  return header
+    .split(",")
+    .map((one) => one.trim())
+    .filter((one) => one !== "");
 }
 
-/** 交给 provider 的取数通道：每个请求都带上这个会话的令牌，令牌不出服务端。 */
-export function createGithubHttp(accessToken: string, fetchImpl: typeof fetch = fetch): Http {
+/** 换到 token 后再问一次「你是谁」：用户可能在授权页换了账号。顺带取回**实际**授予的 scope。 */
+export async function fetchIdentity(
+  accessToken: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ login: string; scopes: string[] }> {
+  const res = await fetchImpl("https://api.github.com/user", { headers: apiHeaders(accessToken) });
+  if (!res.ok) throw new Error(`GitHub /user 返回 ${res.status}`);
+  const scopes = parseScopes(res.headers.get("x-oauth-scopes") ?? "");
+  const body = (await res.json()) as { login?: unknown };
+  if (typeof body.login !== "string") throw new Error("GitHub /user 没有给出 login");
+  return { login: body.login, scopes };
+}
+
+/**
+ * 交给 provider 的取数通道：每个请求都带上这个会话的令牌，令牌不出服务端。
+ * `onScopes` 让调用方顺路观察 `X-OAuth-Scopes`：授权在 GitHub 侧被改小时，下一次取数就能看见。
+ */
+export function createGithubHttp(
+  accessToken: string,
+  fetchImpl: typeof fetch = fetch,
+  onScopes?: (scopes: string[]) => void,
+): Http {
   return async (url) => {
     const res = await fetchImpl(url, { headers: apiHeaders(accessToken) });
+    const scopesHeader = res.headers.get("x-oauth-scopes");
+    if (onScopes !== undefined && scopesHeader !== null) onScopes(parseScopes(scopesHeader));
     const body: unknown = await res.json().catch(() => null);
     return { status: res.status, headers: Object.fromEntries(res.headers), body };
   };

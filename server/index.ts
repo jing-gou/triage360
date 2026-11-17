@@ -1,11 +1,14 @@
 import { createServer } from "node:http";
 import { createHandler } from "./api";
 import { loadConfig } from "./config";
-import { SessionStore } from "./sessions";
+import { EncryptedStore } from "./store";
 
 const config = loadConfig(process.env);
-const sessions = new SessionStore();
-const handler = createHandler({ config, sessions, now: () => Date.now() });
+const store = new EncryptedStore(config.dataDir, () => Date.now());
+// 启动时先扫一遍 30 天未访问的租户：重启即执行，不依赖有人来访问。
+const pruned = store.prune(Date.now());
+if (pruned > 0) console.log(`[store] pruned ${pruned} inactive tenant(s)`);
+const handler = createHandler({ config, store, now: () => Date.now() });
 
 const server = createServer((req, res) => {
   handler(req, res).catch(() => {
