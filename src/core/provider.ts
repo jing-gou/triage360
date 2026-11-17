@@ -87,7 +87,7 @@ export type DuePrecision = "day" | "instant";
 /**
  * 原始截止值 → 定稿里那一对键。折算与粒度判定只在这一处，两件事共用同一个 `DATE_ONLY` 判断，
  * 所以不会出现 `dueAt` 说是午夜、`duePrecision` 说是日期。
- * 只写日期（`2026-11-17`）说的是「这天结束之前」：`dueAt` 取那一天的起点，「是哪一天」由它的
+ * 只写日期（`2026-11-17`）说的是「那天做完都算及时」：`dueAt` 取那一天的起点，「是哪一天」由它的
  * UTC 日期部分带下去，打分按日比而不拿它当时刻用。带时刻的原始串仍走 `Date` 解析。
  */
 export function dueFrom(raw: string): { dueAt: string; duePrecision: DuePrecision } {
