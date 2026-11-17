@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Provider, Scope } from "../core/provider";
+import { sourceGroupOf } from "../core/source-group";
 import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
+import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrder } from "./manual-order";
 
 const scope: Scope = { assignee: "me" };
@@ -54,8 +56,9 @@ export function App() {
       zoneOffsetMinutes,
       // 演示用判定表：真实判据在 #18，接进来的是同一个注入点，不是另一套逻辑。
       sameEvent: demoSameEvent,
-      // 上一轮排的顺序在这里回到构建器：存储归界面管，构建器只认注入（ADR-0007）。
+      // 上一轮排的顺序与往期放置都回到构建器：存储归界面管，构建器只认注入（ADR-0007、ADR-0009）。
       manualOrder: loadManualOrder(),
+      placements: loadLearningRecords(),
     }).then((next) => {
       if (alive) setList(next);
     });
@@ -67,6 +70,7 @@ export function App() {
   /**
    * 把第 `from` 张卡挪到第 `to` 张的位置：落点用目标原来的序号，向上向下两侧读起来都直观。
    * 写进去的是**整份**可见顺序，所以这一次拖拽之后所有已有卡片都归访客，规则只对新条目说话（ADR-0007）。
+   * 同一次拖拽另外记一条放置（#10）：`to` 就是它放完落在的第几位，0 基。
    */
   function move(from: number, to: number): void {
     if (list === null || from === to) return;
@@ -74,8 +78,17 @@ export function App() {
     if (moved === undefined) return;
     const rest = list.entries.filter((_, index) => index !== from);
     rest.splice(to, 0, moved);
-    setList({ ...list, entries: rest });
+    // 落盘的是整份可见顺序 ⇒ 这些卡从这一次起都归手动区，命中标记一并去掉，与下一次刷新看到的一致（ADR-0009）。
+    setList({ ...list, entries: rest.map(({ learned, ...entry }) => entry) });
     saveManualOrder(rest.map((entry) => entry.task.id));
+    // 分组键当场算下来存：这一轮之后那条任务可能从清单上消失（关掉、转派），届时没人能重算它属于哪个来源。
+    appendLearningRecord({
+      providerId: moved.task.providerId,
+      taskId: moved.task.id,
+      group: sourceGroupOf(moved.task),
+      at: new Date().toISOString(),
+      position: to,
+    });
     // 标记要等这句话真被看过才落盘：没关就刷新，下一次拖拽还会说一遍。
     if (!hasSeenOrderNotice()) setNotice({ title: moved.task.title, from, to });
   }
@@ -96,7 +109,7 @@ export function App() {
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
       <ol className="cards">
-        {list.entries.map(({ task, reason, mergedFrom }, index) => {
+        {list.entries.map(({ task, reason, learned, mergedFrom }, index) => {
           // 合并卡的来源槽一格一个来源，各自跳到各自的记录；没合并的卡片 DOM 不变。
           const sources = mergedFrom ?? [task];
           const samples = [
@@ -157,6 +170,8 @@ export function App() {
                   </span>
                 ))}
                 <span className="card-reason">{REASON_LABELS[reason]}</span>
+                {/* 命中行只在被抬起来的那些卡上出现（AC#3）；手动区里的卡不带它，构建器已经把 `learned` 剥掉了。 */}
+                {learned !== undefined && <span>因为你连续把 {learned.group} 排在前面</span>}
                 <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
               </p>
             </li>
@@ -192,14 +207,15 @@ export function App() {
               刷新之后卡片还在原位，规则打分不再挪动它们，只负责把新出现的条目按紧急度接在后面。
             </p>
             <p className="notice-body">
-              记下来的只有这些：每条的标识，和你把它放在第几位。标题、正文、评论都不在里面。它现在还只记顺序，
+              记下来的只有这些：每条的标识、它属于哪个来源，和你把它放在第几位。标题、正文、评论都不在里面。
               {""}
-              不会猜你想先做哪一类任务。
+              最近七天里你把某个来源的任务往前三位放过两次，它的新任务就会在同一档里排得靠前一点——越不过逾期的那些。
             </p>
             <p className="notice-body">
-              这份顺序存在这台浏览器的本地存储里——换浏览器或清空站点数据，顺序回到规则打分。撤销授权和 30 天未访问的自动清除管的是服务端那份账，
+              这些都存在这台浏览器的本地存储里——换浏览器或清空站点数据，顺序回到规则打分。撤销授权和 30
+              天未访问的自动清除管的是服务端那份账，
               {""}
-              不会清掉这里的顺序。
+              不会清掉这里的顺序和记录。
             </p>
             <button autoFocus className="notice-close" onClick={dismissNotice} type="button">
               知道了

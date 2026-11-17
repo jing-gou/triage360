@@ -1,4 +1,8 @@
 import type { Http, Provider, Scope, Task } from "./provider";
+import { hitsByGroup, type PlacementRecord } from "./learning";
+import { sourceGroupOf } from "./source-group";
+
+export type { PlacementRecord };
 
 export interface TodayListDeps {
   providers: readonly Provider[];
@@ -28,6 +32,12 @@ export interface TodayListDeps {
    * 省略即完全按规则排。构建器不自己读浏览器存储：那样同一份输入在 CI 与访客浏览器里会排成两种顺序。
    */
   manualOrder?: readonly string[];
+  /**
+   * 访客往期的放置记录（`#10` 学习闭环）：命中的来源分组在**档内**获得优先权，档序一个字都不改。
+   * 和 `manualOrder` 同一个理由——构建器不自己读浏览器存储，否则同一份输入在 CI 与访客浏览器里会排成两种顺序。
+   * 省略或空数组即完全没有学习这回事，输出回到 ADR-0005 的档内序。
+   */
+  placements?: readonly PlacementRecord[];
 }
 
 export interface TodayList {
@@ -44,11 +54,23 @@ export interface ListEntry {
   task: Task;
   reason: RuleId;
   /**
+   * 这张卡是**被学习加权抬上来**的那一条时才有它：命中的是哪个来源分组、近期置顶过几次。
+   * #8 的「为什么是这几条」与卡片上那句本地文案读它，八键不动——和 `reason` 同一个理由。
+   * 手动区里的卡不带它：那张卡站在那儿是因为访客自己拖过它，说成「因为连续置顶」就是假话。
+   */
+  learned?: LearnedBoost;
+  /**
    * 这张卡合成自哪几条原始记录，只在真的合并过时存在，第一条就是 `task`。
    * 和 `reason` 同一个理由：来源集合是构建器这一侧的结论，八键不因合并而长。
    * #8 的「为什么是这几条」与界面上的逐个跳转都读它。
    */
   mergedFrom?: readonly Task[];
+}
+
+/** 学习加权命中的那个来源分组，以及它在窗口内被置顶的次数（`#10`）。 */
+export interface LearnedBoost {
+  group: string;
+  hits: number;
 }
 
 /** 「这两条是不是同一件事」：#18 的语义匹配与 #7 的判定表都实现这一个签名。 */
@@ -79,20 +101,36 @@ export async function buildTodayList({
   zoneOffsetMinutes,
   sameEvent,
   manualOrder,
+  placements = [],
 }: TodayListDeps): Promise<TodayList> {
   const batches = await Promise.all(providers.map((provider) => buildOne(provider, http, scope, previous)));
 
   // 打分（T04）先按规则分堆，堆内按最近有动静排。
   // normalize 已把各家时间统一成 UTC，字符串比较才成立；时钟只取一次，同一轮里不许变。
   const instant = now().toISOString();
-  const entries = batches
+  const boost = hitsByGroup(placements, instant);
+  const entries: ListEntry[] = batches
     .flat()
-    .map((task) => ({ task, reason: ruleOf(task, instant, zoneOffsetMinutes) }));
+    .map((task) => {
+      const group = sourceGroupOf(task);
+      const hits = boost.get(group);
+      return {
+        task,
+        reason: ruleOf(task, instant, zoneOffsetMinutes),
+        ...(hits === undefined ? {} : { learned: { group, hits } }),
+      };
+    });
+  // 学习加权插在档位**之后**、更新时间之前（ADR-0009）：它表达的是「同一种紧急度里先看哪条」，
+  // 不是「这条比逾期还急」。没命中的那些条 `learned` 缺席，取 0，于是这一层是平的，
+  // 比较落到原来的 updatedAt → 码元序，ADR-0005 定下来的档内序一个字没动。
   // 末位按 id 破平：档位与更新时间都相同的那些条目不能由 provider 返回的数组顺序决定，
   // 那个顺序不属于本应用（T05 合并四家之后更明显）。
   entries.sort(
     (a, b) =>
-      RANK[a.reason] - RANK[b.reason] || byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id),
+      RANK[a.reason] - RANK[b.reason] ||
+      (b.learned?.hits ?? 0) - (a.learned?.hits ?? 0) ||
+      byCode(b.task.updatedAt, a.task.updatedAt) ||
+      byCode(a.task.id, b.task.id),
   );
 
   return { generatedAt: instant, entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder) };
@@ -104,6 +142,8 @@ export async function buildTodayList({
  * 若放在合并之前，把某条来源排到最前会让它当上表头、连带把整张卡的档位改掉——ADR-0006 要守的正是那个。
  * 代价记在 ADR-0007：界面一次落盘写的是整份可见顺序，所以那一次之后所有已有卡都在手动区里，
  * 之后新变成逾期的那条不会挤进来，它落在未排区的最前面。
+ * 手动区里的那些条目同时去掉命中标记：那张卡的位置是访客那一票给的，
+ * 文案再说「因为你连续把它排在前面」就是把规则那一层记在了别人头上（AC#3 与 ADR-0007 的交界）。
  */
 function applyManualOrder(entries: ListEntry[], manualOrder?: readonly string[]): ListEntry[] {
   if (manualOrder === undefined) return entries;
@@ -113,10 +153,16 @@ function applyManualOrder(entries: ListEntry[], manualOrder?: readonly string[])
   for (const entry of entries) {
     const at = posOf.get(entry.task.id);
     if (at === undefined) rest.push(entry);
-    else placed.push({ entry, at });
+    else placed.push({ entry: withoutLearned(entry), at });
   }
   placed.sort((a, b) => a.at - b.at);
   return [...placed.map(({ entry }) => entry), ...rest];
+}
+
+/** 去掉命中标记，其余原样：`learned` 这个键缺席而不是等于 undefined，界面上「有没有它」只有一种读法。 */
+function withoutLearned(entry: ListEntry): ListEntry {
+  const { learned, ...rest } = entry;
+  return rest;
 }
 
 /**
