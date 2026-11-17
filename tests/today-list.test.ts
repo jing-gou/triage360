@@ -305,6 +305,48 @@ describe("seam 1 · 下一轮构建", () => {
     ]);
   });
 
+  // #9 会把跨轮快照落盘，落的就是 `previous` 这一点数据：少存第 8 键，`ruleOf` 不报错，
+  // 而是静默落回瞬间支——同一条只写日期的截止会在本地早上从「今日到期」变成「已逾期」。
+  // 这里钉的是「原样带过来」：保留的条目必须连粒度一起带过来。
+  it("跨轮保留的条目带着第 8 键：只写日期的截止不会因为换轮变成逾期", async () => {
+    const firstRound = fakeHttp({
+      jira: {
+        view: [
+          {
+            id: "10050",
+            key: "TRI-50",
+            fields: {
+              summary: "周报只写了日期",
+              status: { name: "In Progress" },
+              updated: "2026-11-16T14:00:00.000+0800",
+              duedate: "2026-11-17",
+            },
+          },
+        ],
+      },
+    });
+    const round1 = await buildTodayList({
+      providers: [jira],
+      http: firstRound,
+      now: clock,
+      scope,
+      zoneOffsetMinutes: 480,
+    });
+    expect(round1.entries.map((entry) => entry.reason)).toEqual(["dueToday"]);
+
+    const secondRound = fakeHttp({ jira: { view: [], byId: [] } });
+    const round2 = await buildTodayList({
+      providers: [jira],
+      http: secondRound,
+      now: clock,
+      scope,
+      previous: round1.entries.map((entry) => entry.task),
+      zoneOffsetMinutes: 480,
+    });
+
+    expect(round2.entries.map((entry) => [entry.reason, entry.task.duePrecision])).toEqual([["dueToday", "day"]]);
+  });
+
   it("刚完成的条目不会被上一轮的旧状态复活", async () => {
     const github = createGithubLikeProvider();
     const firstRound = fakeHttp({ github: { view: [issue(3001, "写本周周报", "open", "2026-11-16T08:00:00Z")] } });
