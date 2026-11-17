@@ -4,6 +4,7 @@
  */
 
 export interface ServerConfig {
+  host: string;
   port: number;
   /** 回调域名，例如 `https://api.example.com`；三家后台登记的地址都以它为基。 */
   appBaseUrl: string;
@@ -14,6 +15,8 @@ export interface ServerConfig {
 
 export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
   return {
+    // 默认只听回环口：反代终结 TLS，8787 不该出现在公网面上（#39 的 AC#2）。
+    host: env.HOST ?? "127.0.0.1",
     port: Number(env.PORT ?? 8787),
     appBaseUrl: trimSlash(required(env, "APP_BASE_URL")),
     frontendUrl: trimSlash(required(env, "FRONTEND_URL")),

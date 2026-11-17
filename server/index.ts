@@ -17,9 +17,9 @@ const server = createServer((req, res) => {
   });
 });
 
-server.listen(config.port, () => {
-  // 启动行只报端口与回调基地址：日志里不出现令牌、不出现请求头。
-  console.log(`triage360 server listening on :${config.port} (callback base ${config.appBaseUrl})`);
+server.listen(config.port, config.host, () => {
+  // 启动行只报地址与回调基地址：日志里不出现令牌、不出现请求头。
+  console.log(`triage360 server listening on ${config.host}:${config.port} (callback base ${config.appBaseUrl})`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
