@@ -59,6 +59,24 @@ body {
   border-left-width: 3px;
   border-radius: 10px;
   padding: 14px 16px 13px 44px;
+  cursor: grab;
+}
+
+/*
+  拖拽中的样式只在按住拖动时出现：常态一个多余像素都不加。
+  落点线画在目标卡片的上沿或下沿，方向由被拖的那张在上还是在下来决定。
+*/
+.card--dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.card--dropBefore {
+  box-shadow: 0 -3px 0 -1px var(--ink);
+}
+
+.card--dropAfter {
+  box-shadow: 0 3px 0 -1px var(--ink);
 }
 
 .card::before {
@@ -136,4 +154,48 @@ a.card-source:hover {
 .card--dueToday .card-reason {
   color: var(--ink);
   font-weight: 500;
+}
+
+/* 首次排序说明：一层遮罩 + 一块居中的话，看完就走，不留常驻入口。 */
+.notice-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 26, 26, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.notice {
+  max-width: 460px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 22px 24px 18px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+}
+
+.notice-title {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.notice-body {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.notice-close {
+  margin-top: 4px;
+  padding: 6px 14px;
+  background: var(--ink);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
