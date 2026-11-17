@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, toDueInstant, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, dueFrom, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 假 provider：按 GitHub 的形状构造请求 URL 并解析响应，数据来自本文件字面量。
@@ -70,7 +70,7 @@ export function createGithubLikeProvider(): Provider {
         url: issue.html_url,
         state: issue.state,
         updatedAt: new Date(issue.updated_at).toISOString(),
-        dueAt: issue.milestone?.due_on ? toDueInstant(issue.milestone.due_on) : undefined,
+        ...(issue.milestone?.due_on ? dueFrom(issue.milestone.due_on) : { dueAt: undefined, duePrecision: undefined }),
       };
     },
 

@@ -26,7 +26,7 @@ export interface TodayList {
 
 /**
  * 清单条目 = 任务 + 它为什么排在这里。
- * 理由不塞进任务本身：定稿的七键是跨平台最小形状（T03），打分是构建器这一侧的事。
+ * 理由不塞进任务本身：定稿的八键是跨平台最小形状（T03），打分是构建器这一侧的事。
  */
 export interface ListEntry {
   task: Task;
@@ -78,12 +78,21 @@ export async function buildTodayList({
 /**
  * 这条排在这里是哪条规则决定的。第三档有两个标识：压根没写截止，与截止在更晚的那天——
  * 「最近更新」对后者是句假话，而 AC#2 要的就是原因本身。
- * 逾期比的是瞬间，与时区无关；「今日」比的才是日界，所以它需要知道访客在哪一天。
+ * 「今日」比的才是日界，所以它需要知道访客在哪一天。
  * 先比瞬间再比日：今天但已经过去的时刻算逾期，不算今日到期。
  * 不是「未来 24 小时内」：那是时长，不是日历日。
+ *
+ * 只写日期的截止走另一条路，因为它没有瞬间可比：源站写 `2026-11-17` 说的是「访客的 11-17 这天
+ * 做完都算及时」，那一天归哪一天由源站已经写死了，再套一次访客偏移反而会把它推到相邻日。
+ * 于是它比的是两个日历日——写下的那天 vs 访客的今天，`YYYY-MM-DD` 的字典序就是时间序。
  */
 function ruleOf(task: Task, instant: string, zoneOffsetMinutes?: number): RuleId {
   if (task.dueAt === undefined) return "noDeadline";
+  if (task.duePrecision === "day") {
+    const dueDay = task.dueAt.slice(0, 10);
+    const today = dayOf(instant, zoneOffsetMinutes);
+    return dueDay < today ? "overdue" : dueDay === today ? "dueToday" : "dueLater";
+  }
   if (task.dueAt < instant) return "overdue";
   return dayOf(task.dueAt, zoneOffsetMinutes) === dayOf(instant, zoneOffsetMinutes) ? "dueToday" : "dueLater";
 }

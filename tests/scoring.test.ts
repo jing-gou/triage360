@@ -217,7 +217,7 @@ describe("seam 1 · 时钟与确定性", () => {
 describe("seam 1 · 打分只吃元数据", () => {
   // AC#3 要挡的是「顺手从正文里读点东西」：日期写在描述里、"已逾期" 这种字样、LLM 的措辞。
   // 所以干扰项刻意写成能骗过一个「在正文里找日期」的实现；顺序与理由都不许因此改变。
-  // 理由还必须是七个键之外的那一个：`body` 不许被 normalize 带进任务里。
+  // 理由还必须是八个键之外的那一个：`body` 不许被 normalize 带进任务里。
   it("正文写什么都改不了顺序与理由", async () => {
     const quiet = [
       issue(2701, "中午交周报", "2026-11-16T10:00:00Z", "2026-11-17T12:00:00Z"),
@@ -239,10 +239,10 @@ describe("seam 1 · 打分只吃元数据", () => {
     ];
     expect(plain.entries.map((entry) => [entry.task.title, entry.reason])).toEqual(expected);
     expect(withBodies.entries.map((entry) => [entry.task.title, entry.reason])).toEqual(expected);
-    // 七键之外没有 `body`：正文不进任务，也就无处被打分读走。
+    // 八键之外没有 `body`：正文不进任务，也就无处被打分读走。
     expect(withBodies.entries.map((entry) => Object.keys(entry.task).sort().join(","))).toEqual([
-      "dueAt,id,providerId,state,title,updatedAt,url",
-      "dueAt,id,providerId,state,title,updatedAt,url",
+      "dueAt,duePrecision,id,providerId,state,title,updatedAt,url",
+      "dueAt,duePrecision,id,providerId,state,title,updatedAt,url",
     ]);
   });
 });
@@ -267,6 +267,44 @@ describe("seam 1 · 只写日期的截止", () => {
     ]);
 
     expect(result.entries.map((entry) => entry.reason)).toEqual(["overdue"]);
+  });
+
+  // 「当日末尾」得是**访客**的那一天的末尾：源站写 `2026-11-17` 说的是「11-17 这天做完」，
+  // 而 11-17 对 +08 的访客是本地 00:00 → 23:59，不是 UTC 的那 24 小时。
+  // 折成 UTC 日尾（`2026-11-17T23:59:59Z` = 本地次日 07:59:59）再按访客日分档，
+  // 这条在整个 +8 白天都是 dueLater，本地次日 08:00 一过直接跳 overdue——今日到期档对它永远不出现。
+  // 面板每次都传偏移（`App.tsx`），所以钉的是面板真正走的那条口径。
+  it("只写日期的截止落在访客写下的那一天：东八区本地中午算今日到期", async () => {
+    const result = await at("2026-11-17T04:00:00Z", [issue(2803, "周报只写了日期", "2026-11-16T09:00:00Z", "2026-11-17")], {
+      zoneOffsetMinutes: 480,
+    });
+
+    expect(result.entries.map((entry) => entry.reason)).toEqual(["dueToday"]);
+  });
+
+  it("按日粒度判逾期：访客过完那天就是逾期，不等 UTC 的 23:59", async () => {
+    // 本地 11-18 00:30——访客的 11-17 已经过完。
+    const east = await at("2026-11-17T16:30:00Z", [issue(2804, "周报只写了日期", "2026-11-16T09:00:00Z", "2026-11-17")], {
+      zoneOffsetMinutes: 480,
+    });
+    expect(east.entries.map((entry) => entry.reason)).toEqual(["overdue"]);
+  });
+
+  it("西偏移同一条规则：本地那天没过完就还算今日到期", async () => {
+    // 本地 −05:00 的 11-17 19:30——UTC 已是 11-18，但访客的 11-17 还没过完。
+    const west = await at("2026-11-18T00:30:00Z", [issue(2805, "周报只写了日期", "2026-11-16T09:00:00Z", "2026-11-17")], {
+      zoneOffsetMinutes: -300,
+    });
+
+    expect(west.entries.map((entry) => entry.reason)).toEqual(["dueToday"]);
+  });
+
+  it("带时刻的截止不受影响：日粒度只给只写日期的原值", async () => {
+    const result = await at("2026-11-17T04:00:00Z", [
+      issue(2806, "带时刻的评审", "2026-11-16T09:00:00Z", "2026-11-17T23:59:59.000Z"),
+    ], { zoneOffsetMinutes: 480 });
+
+    expect(result.entries.map((entry) => entry.reason)).toEqual(["dueLater"]);
   });
 });
 

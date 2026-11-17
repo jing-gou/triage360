@@ -83,6 +83,7 @@ export function createGiteeLikeProvider(): Provider {
         updatedAt: new Date(issue.updated_at).toISOString(),
         // Gitee 的截止日期字段未实测（T15 真连时按实测补），但键必须写出来：定稿的键集合不按平台分叉。
         dueAt: undefined,
+        duePrecision: undefined,
       };
     },
 
