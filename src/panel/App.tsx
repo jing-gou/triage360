@@ -66,7 +66,7 @@ export function App() {
 
   /**
    * 把第 `from` 张卡挪到第 `to` 张的位置：落点用目标原来的序号，向上向下两侧读起来都直观。
-   * 顺序立刻写进本地存储，下一次构建（刷新、#16 的轮询）由 manualOrder 带回去。
+   * 写进去的是**整份**可见顺序，所以这一次拖拽之后所有已有卡片都归访客，规则只对新条目说话（ADR-0007）。
    */
   function move(from: number, to: number): void {
     if (list === null || from === to) return;
@@ -76,10 +76,13 @@ export function App() {
     rest.splice(to, 0, moved);
     setList({ ...list, entries: rest });
     saveManualOrder(rest.map((entry) => entry.task.id));
-    if (!hasSeenOrderNotice()) {
-      markOrderNoticeSeen();
-      setNotice({ title: moved.task.title, from, to });
-    }
+    // 标记要等这句话真被看过才落盘：没关就刷新，下一次拖拽还会说一遍。
+    if (!hasSeenOrderNotice()) setNotice({ title: moved.task.title, from, to });
+  }
+
+  function dismissNotice(): void {
+    markOrderNoticeSeen();
+    setNotice(null);
   }
 
   if (!list) {
@@ -176,23 +179,25 @@ export function App() {
           .join(" · ")}{" "}
         · {WALL_CLOCK.format(generatedAt)}
       </p>
-      {/* 只在第一次主动排序后出现一次（标记写进本地存储），之后不再打扰。 */}
+      {/* 只在第一次主动排序后出现，看过并关掉才落「已说过」的标记（AC#3）。 */}
       {notice !== null && (
-        <div className="notice-mask" onClick={() => setNotice(null)}>
+        <div className="notice-mask" onClick={dismissNotice}>
           <div className="notice" role="dialog" aria-modal="true" aria-labelledby="notice-title">
             <h2 className="notice-title" id="notice-title">
-              这一条的位置我记住了
+              这份顺序归你了
             </h2>
             <p className="notice-body">
-              你把「{notice.title}」从第 {notice.from + 1} 位放到了第 {notice.to + 1} 位。从现在起，你排过的卡片下次刷新
+              你把「{notice.title}」从第 {notice.from + 1} 位放到了第 {notice.to + 1} 位。从现在起，这一屏的次序就按你排的走：
               {""}
-              还在你放的位置，规则打分不会再把它挪回紧急度那一档；你没排过的新条目按规则排在它们后面。
+              刷新之后卡片还在原位，规则打分不再挪动它们，只负责把新出现的条目按紧急度接在后面。
             </p>
             <p className="notice-body">
-              记下来的只有这些：每条的标识，和你把它放在第几位。标题、正文、评论都不在里面。
-              这份顺序存在这台浏览器的本地存储里——换浏览器或清空站点数据，顺序回到规则打分。
+              记下来的只有这些：每条的标识，和你把它放在第几位。标题、正文、评论都不在里面。它现在还只记顺序，
+              {""}
+              不会猜你想先做哪一类任务。
             </p>
-            <button className="notice-close" onClick={() => setNotice(null)} type="button">
+            <p className="notice-body">这份顺序存在这台浏览器的本地存储里——换浏览器或清空站点数据，顺序回到规则打分。</p>
+            <button autoFocus className="notice-close" onClick={dismissNotice} type="button">
               知道了
             </button>
           </div>

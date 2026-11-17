@@ -102,15 +102,16 @@ export async function buildTodayList({
  * 手动那一票（#9）：排在 `manualOrder` 里的卡按访客留下的次序在前，其余保持规则序跟在后面。
  * 作用在合并**之后**：`manualOrder` 记的是界面上看得见的卡，而被并掉的那条已经不是卡了。
  * 若放在合并之前，把某条来源排到最前会让它当上表头、连带把整张卡的档位改掉——ADR-0006 要守的正是那个。
- * 代价记在 ADR-0007：手动排序期间新变成逾期的条目不会挤进手动区，它落在未排区的最前面。
+ * 代价记在 ADR-0007：界面一次落盘写的是整份可见顺序，所以那一次之后所有已有卡都在手动区里，
+ * 之后新变成逾期的那条不会挤进来，它落在未排区的最前面。
  */
 function applyManualOrder(entries: ListEntry[], manualOrder?: readonly string[]): ListEntry[] {
   if (manualOrder === undefined) return entries;
-  const rank = new Map(manualOrder.map((id, at) => [id, at] as const));
+  const posOf = new Map(manualOrder.map((id, at) => [id, at] as const));
   const placed: { entry: ListEntry; at: number }[] = [];
   const rest: ListEntry[] = [];
   for (const entry of entries) {
-    const at = rank.get(entry.task.id);
+    const at = posOf.get(entry.task.id);
     if (at === undefined) rest.push(entry);
     else placed.push({ entry, at });
   }

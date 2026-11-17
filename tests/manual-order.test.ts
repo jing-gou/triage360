@@ -90,7 +90,8 @@ describe("seam 1 · 手动顺序优先于规则打分", () => {
     const list = await buildTodayList({ ...deps([GITEE_321, "github:921", "github:923"]), http: fakeHttp(view) });
 
     // 922 这一轮变成逾期、更新时间也是全场最新，规则会把顶到第 1；它不在手动区里，所以第 4 是它该待的位置。
-    // 这条断言同时是这个选择的价格：手动排序期间新变的逾期条目不会挤进来（ADR-0007）。
+    // 这条断言同时是这个选择的价格：界面一次落盘写的是整份可见顺序，所以真实界面上拖过一次之后，
+    // 所有已有卡都不再被规则挪动，只有新条目走规则序（ADR-0007）。
     expect(list.entries.map((entry) => [entry.task.id, entry.reason])).toEqual([
       [GITEE_321, "noDeadline"],
       ["github:921", "overdue"],
