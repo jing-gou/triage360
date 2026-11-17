@@ -12,11 +12,14 @@
 - **来源分组（`group`）** — 学习加权认的粒度：一条任务属于哪个来源。键从 `url` 派生（`sourceGroupOf`）——托管站取 `owner/repo`，其余退到主机名，连主机都读不出退到 `providerId`。定稿的八键里没有 repo 也没有 labels，所以它是派生量而不是任务的一个键。票面那句「某 repo / 某类 label」里 label 那一半 v1 没做，偏离记在 ADR-0009。
 - **学习加权（`learned`）** — 某来源分组在 7 天窗口内被放进**前三位**满两次之后，它的条目在**同一档里**排得靠前：`{ group, hits }` 挂在**清单条目**上，供 #8 与卡片文案引用。它是比较函数的第二层，插在档位与更新时间之间，所以越不过逾期项（ADR-0009）。**手动顺序**已经接管的那些卡不带它——那张卡的位置是访客那一票给的，说成「因为连续置顶」就是假话。
 - **任务卡（Card）** — 今日清单里一条任务在界面上的呈现。
-- **来源角标（Source Corner）** — 右下角角标里列出本轮接线的平台名与生成时间的那一行；连接、撤销与清除本地记录的入口也住在这里。ticket 里的「Jira 卡 / 飞书卡」指带来源名的**任务卡**，不是它。
+- **来源角标（Source Corner）** — 右下角角标里列出本轮接线的平台名与生成时间的那一行；连接、（重新）授权档位、撤销与清除本地记录的入口也住在这里。ticket 里的「Jira 卡 / 飞书卡」指带来源名的**任务卡**，不是它。
 - **自陈屏** — 点「连接」之后先出现的一层弹窗：写清收什么、加密边界、怎么清，以及两处本地例外；显式同意才跳 OAuth。不做常驻入口，只在伸手连接的那一刻占住一屏（#13）。
 - **构建器（`buildTodayList`）** — seam 1。输入只有 providers、注入的取数通道、注入的时钟、范围、上一轮的任务集合、注入的访客时区偏移、注入的**同一件事**判定器、注入的**手动顺序**、注入的**放置记录**；除此之外没有第二种信息来源——它自己不读浏览器存储，也不读宿主时区。
 - **凭据生命周期决策器（`decideCredentialAction`）** — seam 2。纯函数：输入 `now` / `expiresAt` / `lastRefreshAt` / `isDemoTenant`，输出 `serve` / `lazy-refresh` / `scheduled-refresh` / `expire-to-reauth`。`lastRefreshAt` 记的是刷新**尝试**（成功失败都记）：过期之后已经试过、手里这枚却仍然过期，就指向重连而不是再刷——Gitee 的一天过期与 Atlassian 的轮换失效都靠这条不打转。演示租户不在请求路径上刷新，交给 cron。同模块的 `rotateCredential` 负责原子替换：整对写库成功才把旧 refresh token 交回去退役，写失败返回原记录继续用——坏一次轮换不丢租户。
 - **加密存储（`EncryptedStore`）** — 服务端那本租户账：`<DATA_DIR>/store.json` 里只有加密过的 token、登录名、授权档与 scope、时间戳，密钥是旁边的 `store.key`（首次启动生成，0600）。会话标识只存 SHA-256 哈希，读走账本的人拿不到能用的 Bearer。撤销 = 整条移除后立刻重读验证；30 天未访问在启动、每小时一次的扫描与每次查找时清理（ADR-0011）。
+- **授权档（`Tier`）** — GitHub 内按公开/私有拆开的授权粒度：`public`（`public_repo`）与 `private`（`repo`）。每档一次独立 OAuth 授权、一枚 token，两枚并存于同一条租户记录，第二次授权不覆盖第一档；取数优先私有档，因为 `repo` 是公开档 scope 的超集。其余平台没有这个维度（ADR-0012）。
+- **授权粒度（`AuthGranularity`）** — provider 通过 `scopeDescriptor` 自报的形状：`tiered`（各档是 `{ tier, label }`，界面逐档给授权入口）或 `uniform`（一句 `note`，界面照抄）。`scopeDescriptor` 同时带着本轮查的是哪一片（`range`）。界面只按 `kind` 分派，不认平台名——「Gitee / Jira 不出现该开关」这条差异落在 provider 里，不落在每个 `if` 里（ADR-0012）。
+- **实际授予 scope（`scopes` / `missing`）** — 真值只来自 GitHub 响应头 `X-OAuth-Scopes`：回调时取一次，之后每次取数顺路刷新并落库。`expected` 是这一档应有的 scope，`missing` 是应有而没拿到的差集（`repo` 满足公开档）。界面显示实际值并在角标与弹层里指出差异，不静默少显示（ADR-0012）。
 - **访客日历日** — 「今日到期」判的是哪一天：把瞬间平移到注入的 `zoneOffsetMinutes` 那一侧再取日；省略该输入就是 UTC 日。构建器自己不读宿主时区——读了，同一个输入在 CI 与浏览器里就会判出两种顺序。带时刻的截止（`duePrecision: "instant"`）才走这次平移；只写日期的（`"day"`）源站已经把日子写死了，再平移一次会把它推到相邻日。注入的是**偏移**不是**时区**：一个数字管整轮，夏令时换日之后、截止落在换日另一侧的条目会偏一小时（ADR-0005）。
 - **轮次（Round）** — 一次 `buildTodayList` 调用。跨轮状态由调用方保管：构建器读 `previous`，自己不落盘，provider 也不记上一轮。
 - **provider** — 一个平台的适配器，实现七法契约：`search` / `getByIds` / `normalize` / `doneStates` / `deletedStates` / `pollIntervalMs` / `scopeDescriptor`。
