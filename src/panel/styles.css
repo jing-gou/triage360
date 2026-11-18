@@ -167,6 +167,32 @@ a.card-source:hover {
   font-size: 11px;
 }
 
+/* 「为什么」入口与展开句（#8）：入口常态只是元数据行里的一个弱化词，展开后整行落到下面。 */
+.card-why {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.card-why:hover {
+  color: var(--site-fg);
+}
+
+.card-why-line {
+  flex-basis: 100%;
+  color: var(--site-fg);
+  line-height: 1.6;
+}
+
+.card-why-note {
+  color: var(--muted);
+}
+
 /*
   US#23：时间压力要在读标题之前就被感知，所以强调落在卡片自身，而不是把每一张的理由都加粗。
   第三档沿用 .card-meta 的弱化色——它是常态，常态要安静。

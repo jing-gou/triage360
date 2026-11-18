@@ -83,3 +83,33 @@ export async function revokeSession(base: string, session: string): Promise<void
   });
   if (!res.ok && res.status !== 401) throw new Error(`logout 返回 ${res.status}`);
 }
+
+/** 送给服务端做措辞的那张卡：只有元数据，正文、评论、diff 一概不在这里（#8）。 */
+export interface ReasonCard {
+  title: string;
+  reason: string;
+  learned?: { group: string; hits: number };
+  dueAt?: string;
+  duePrecision?: "day" | "instant";
+  updatedAt: string;
+}
+
+export interface ReasonReply {
+  text: string;
+  elapsedMs: number;
+}
+
+/** 单张卡的理由：服务端 1.8 秒超时；客户端多留 200ms 当兜底，超了就是失败，由调用方回落。 */
+export async function requestReason(base: string, session: string, card: ReasonCard): Promise<ReasonReply> {
+  const res = await fetch(`${base}/api/reason`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ card }),
+    signal: AbortSignal.timeout(2000),
+  });
+  if (res.status === 401) throw new UnauthenticatedError(`reason 返回 401`);
+  if (!res.ok) throw new Error(`reason 返回 ${res.status}`);
+  const body = (await res.json()) as { text?: unknown; elapsedMs?: unknown };
+  if (typeof body.text !== "string" || body.text === "") throw new Error("reason 没有给出文案");
+  return { text: body.text, elapsedMs: typeof body.elapsedMs === "number" ? body.elapsedMs : 0 };
+}

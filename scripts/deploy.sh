@@ -76,7 +76,7 @@ log "npm ci + build:server"
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" ci
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" run build:server
 
-# 4. 运行环境：七键、root 600；内容没变就不碰文件。
+# 4. 运行环境：七键、root 600；配了 DEEPSEEK_API_KEY 就多一行（#8）。内容没变就不碰文件。
 ENV_FILE=$APP_DIR/.env
 tmp_env=$(mktemp)
 trap 'rm -f "$tmp_env"' EXIT
@@ -89,6 +89,9 @@ umask 077
   printf 'DATA_DIR=%s\n' "$DATA_DIR"
   printf 'GITHUB_CLIENT_ID=%s\n' "$GITHUB_CLIENT_ID"
   printf 'GITHUB_CLIENT_SECRET=%s\n' "$GITHUB_CLIENT_SECRET"
+  if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+    printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY"
+  fi
 } > "$tmp_env"
 if cmp -s "$tmp_env" "$ENV_FILE"; then
   log ".env 未变"

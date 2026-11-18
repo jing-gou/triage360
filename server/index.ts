@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createHandler } from "./api";
 import { loadConfig } from "./config";
+import { warmReason } from "./reason";
 import { EncryptedStore } from "./store";
 
 const config = loadConfig(process.env);
@@ -12,6 +13,8 @@ function sweep(): void {
 }
 sweep();
 setInterval(sweep, 60 * 60_000).unref();
+// 与扫描同一步：趁没人用先把措辞通道的 DNS + TLS 握好，首个点击不必付冷启动的账。
+void warmReason(config.deepseek);
 const handler = createHandler({ config, store, now: () => Date.now() });
 
 const server = createServer((req, res) => {
