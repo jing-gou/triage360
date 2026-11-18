@@ -4,7 +4,13 @@ import type { Tier } from "../src/core/provider";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
 import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier, missingScopes, SCOPES } from "./github-oauth";
-import { composeReasonWording, parseReasonCard, ReasonTimeoutError, ReasonUnavailableError } from "./reason";
+import {
+  composeReasonWording,
+  parseReasonCard,
+  ReasonQualityError,
+  ReasonTimeoutError,
+  ReasonUnavailableError,
+} from "./reason";
 import type { EncryptedStore } from "./store";
 
 /**
@@ -206,6 +212,10 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
       if (error instanceof ReasonTimeoutError) {
         console.warn("[reason] timeout");
         return json(res, 504, { error: "timeout" });
+      }
+      if (error instanceof ReasonQualityError) {
+        console.warn(`[reason] rejected: ${error.message}`);
+        return json(res, 422, { error: "wording_rejected" });
       }
       // 失败也只记结果类型：上游原文可能带别的东西，不进 journalctl。
       console.error(`[reason] upstream failed: ${error instanceof Error ? error.message : "unknown"}`);

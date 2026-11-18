@@ -1,4 +1,5 @@
 import { RULE_IDS, type RuleId } from "../src/core/today-list";
+import type { ReasonCard } from "../src/core/reason-card";
 import type { DeepseekConfig } from "./config";
 
 /**
@@ -7,24 +8,17 @@ import type { DeepseekConfig } from "./config";
  * 钥匙与上游地址都住在服务端：浏览器拿到的只有一句结果和这段调用的耗时。
  */
 
-export interface ReasonCard {
-  title: string;
-  reason: RuleId;
-  learned?: { group: string; hits: number };
-  dueAt?: string;
-  duePrecision?: "day" | "instant";
-  updatedAt: string;
-}
-
 export class ReasonUnavailableError extends Error {}
 export class ReasonTimeoutError extends Error {}
+/** 模型句没通过校验（漏了档位或学习信号）：面板照常回落到规则句，那句两个来源层都齐全。 */
+export class ReasonQualityError extends Error {}
 
 /** 2 秒是界面约定（PRD 128），留 200ms 给回程；超了就由面板回落到纯规则理由。 */
 const TIMEOUT_MS = 1800;
 const MAX_TOKENS = 200;
 
 const SYSTEM_PROMPT = [
-  "你是任务清单的说明员。排序和档位已由规则引擎定稿，你只负责用一句中文说明这张卡为什么排在这里，不超过 60 字。",
+  "你是任务清单的说明员。档位已由规则引擎定稿，位置可能已被用户手动调整；你只负责用一句中文说明这张卡为什么属于这一档，不超过 60 字。",
   "只依据用户消息里的元数据：不要编造正文、评论、代码或元数据之外的事实。",
   "元数据里有 learned 时，句子必须同时点明档位原因（reason）与这条学习信号（哪个来源分组被连续置顶）；没有 learned 时一个字都不要提学习。",
   "合并卡的其余来源由界面另行标注：不要猜测或列举其他来源平台。",
@@ -115,11 +109,29 @@ export async function composeReasonWording(
   const content = body.choices?.[0]?.message?.content;
   const text = typeof content === "string" ? content.trim() : "";
   if (text === "") throw new Error("DeepSeek 没有给出措辞");
+  assertWording(text, card);
   return { text, elapsedMs: Date.now() - started };
 }
 
 function isRuleId(value: unknown): value is RuleId {
   return typeof value === "string" && (RULE_IDS as readonly string[]).includes(value);
+}
+
+/** AC#6 的两半都硬校验：档位用粗关键词认（同义改写漏了就不给过），学习信号必须原样出现。 */
+const TIER_HINTS: Record<RuleId, readonly string[]> = {
+  overdue: ["逾期", "过期", "期限已过"],
+  dueToday: ["今天到期", "今日到期", "到期", "今天", "今日"],
+  noDeadline: ["截止"],
+  dueLater: ["截止"],
+};
+
+function assertWording(text: string, card: ReasonCard): void {
+  if (!TIER_HINTS[card.reason].some((hint) => text.includes(hint))) {
+    throw new ReasonQualityError("措辞没有点明档位");
+  }
+  if (card.learned !== undefined && !text.includes(card.learned.group)) {
+    throw new ReasonQualityError("措辞没有点明学习信号");
+  }
 }
 
 function text(value: unknown, min: number, max: number): string | null {

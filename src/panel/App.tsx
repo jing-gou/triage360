@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Provider, Scope, Tier } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
 import { buildTodayList, type ListEntry, type RuleId, type TodayList } from "../core/today-list";
@@ -14,9 +14,9 @@ import {
   revokeSession,
   UnauthenticatedError,
   type GithubAuth,
-  type ReasonCard,
   type TierGrant,
 } from "./api";
+import type { ReasonCard } from "../core/reason-card";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { clearLocalRecords, hasLocalRecords } from "./local-records";
 import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrder } from "./manual-order";
@@ -60,12 +60,13 @@ const REASON_LABELS: Record<RuleId, string> = {
   dueLater: "未到截止日",
 };
 
-/** 纯规则理由：AI 不可用或失败时的回落句。有学习信号时同一句里说清两个来源层（AC#6）。 */
+/** 纯规则理由：AI 不可用或失败时的回落句。有学习信号时同一句里说清两个来源层（AC#6）。
+ *  只说档位、不承诺名次：拖过之后位置归访客，句子仍得为真。 */
 const RULE_WORDINGS: Record<RuleId, string> = {
-  overdue: "它已经逾期，所以排在清单最前面。",
-  dueToday: "它今天到期，所以落在今天的这一档。",
-  noDeadline: "它没有写截止时间，按规则排在第三档。",
-  dueLater: "它的截止日在更晚的一天，所以排在今天的清单后面。",
+  overdue: "它已经逾期，按规则落在逾期这一档。",
+  dueToday: "它今天到期，按规则落在今日到期这一档。",
+  noDeadline: "它没有写截止时间，按规则排在未写截止日的那一档。",
+  dueLater: "它的截止日在更晚的一天，按规则排在未到截止日的那一档。",
 };
 
 /** 一张卡被问过「为什么」之后的状态：加载中，或者一句话（AI 措辞 / 规则回落）。 */
@@ -97,6 +98,8 @@ export function App() {
   const [auth, setAuth] = useState<GithubAuth | null>(null);
   /** 每张卡被问过「为什么」之后的那句话；键是卡片标识（合并卡即表头 id）。 */
   const [why, setWhy] = useState<Record<string, WhyState>>({});
+  // 拖拽会把在途请求的答案作废：请求发出时记下代数，回来时代数变了就丢掉，不把旧句写回手动区。
+  const whyEpoch = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -180,6 +183,7 @@ export function App() {
     // 旧句是按档位与学习信号说的：拖过之后整份清单归手动区、命中标记被剥掉，
     // 「排在最前面」「连续置顶」就不再为真，一句都不留（ADR-0009、ADR-0013）。
     setWhy({});
+    whyEpoch.current += 1;
     saveManualOrder(rest.map((entry) => entry.task.id));
     // 分组键当场算下来存：这一轮之后那条任务可能从清单上消失（关掉、转派），届时没人能重算它属于哪个来源。
     appendLearningRecord({
@@ -214,10 +218,13 @@ export function App() {
       return;
     }
     setWhy((one) => ({ ...one, [id]: { status: "loading" } }));
+    const epoch = whyEpoch.current;
     try {
       const reply = await requestReason(API_BASE, session, reasonCardOf(entry));
+      if (whyEpoch.current !== epoch) return;
       setWhy((one) => ({ ...one, [id]: { status: "ready", text: reply.text } }));
     } catch (error) {
+      if (whyEpoch.current !== epoch) return;
       // 会话失效与取数走同一条出路：忘掉它、把角落换成重新连接，这张卡仍回落到规则句。
       if (error instanceof UnauthenticatedError) {
         forgetSession();
@@ -410,7 +417,7 @@ export function App() {
           })
           .join(" · ")}
         {" · "}
-        {API_BASE !== "" && !live && (
+        {API_BASE !== "" && (!live || reconnect) && (
           <>
             <button className="corner-link" onClick={() => openDialog("consent")} type="button">
               {reconnect ? "连接已失效 · 重新连接 GitHub" : "连接 GitHub"}
@@ -418,7 +425,7 @@ export function App() {
             {" · "}
           </>
         )}
-        {(live || hasSession) && (
+        {!reconnect && (live || hasSession) && (
           <>
             <button className="corner-link" onClick={() => openDialog("revoke")} type="button">
               撤销授权
@@ -426,7 +433,7 @@ export function App() {
             {" · "}
           </>
         )}
-        {live && (
+        {!reconnect && live && (
           <>
             <button className="corner-link" onClick={() => openDialog("tiers")} type="button">
               {authNote === null ? "授权档位" : `授权档位 · ${authNote}`}
@@ -484,10 +491,10 @@ export function App() {
           </p>
           <p className="notice-body">
             点卡片上的「为什么」时，服务端只把这张卡的标题与排序元数据（档位、截止、更新时间、学习信号）发给 DeepSeek
-            生成一句措辞；正文、评论、diff 不参与，日志只记结果与耗时。
+            生成一句措辞；正文、评论、diff 不参与，日志只记结果、耗时与失败类型。
           </p>
           <p className="notice-body">
-            谁看得见：只有你自己。面板没有共享入口，服务端不把这些数据交给任何第三方；日志不记 token、授权头与响应体。
+            谁看得见：只有你自己。面板没有共享入口；除了上一段说的 DeepSeek 措辞通道（只收标题与排序元数据），服务端不把这些数据交给其他第三方；日志不记 token、授权头与响应体。
           </p>
           <p className="notice-body">
             token 加密落盘：数据库文件泄露不导致凭据泄露。但这挡不住服务器被完全控制——进程运行时手里有密钥。

@@ -4,7 +4,7 @@
  */
 
 import type { Tier } from "../core/provider";
-import type { RuleId } from "../core/today-list";
+import type { ReasonCard } from "../core/reason-card";
 
 const SESSION_KEY = "triage360:session:v1";
 
@@ -83,16 +83,6 @@ export async function revokeSession(base: string, session: string): Promise<void
     headers: { Authorization: `Bearer ${session}` },
   });
   if (!res.ok && res.status !== 401) throw new Error(`logout 返回 ${res.status}`);
-}
-
-/** 送给服务端做措辞的那张卡：只有元数据，正文、评论、diff 一概不在这里（#8）。 */
-export interface ReasonCard {
-  title: string;
-  reason: RuleId;
-  learned?: { group: string; hits: number };
-  dueAt?: string;
-  duePrecision?: "day" | "instant";
-  updatedAt: string;
 }
 
 export interface ReasonReply {
