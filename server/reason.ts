@@ -1,4 +1,4 @@
-import type { RuleId } from "../src/core/today-list";
+import { RULE_IDS, type RuleId } from "../src/core/today-list";
 import type { DeepseekConfig } from "./config";
 
 /**
@@ -40,7 +40,7 @@ export function parseReasonCard(value: unknown): ReasonCard | null {
   const updatedAt = text(raw.updatedAt, 1, 64);
   const reason = raw.reason;
   if (title === null || updatedAt === null) return null;
-  if (reason !== "overdue" && reason !== "dueToday" && reason !== "noDeadline" && reason !== "dueLater") return null;
+  if (!isRuleId(reason)) return null;
 
   const learnedRaw = raw.learned;
   let learned: ReasonCard["learned"];
@@ -74,7 +74,7 @@ export interface ReasonResult {
  * 一次阻塞式调用，只回一句话。失败分两类交给路由折成状态码：
  * 没配钥匙抛 `ReasonUnavailableError`（503），超时抛 `ReasonTimeoutError`（504），其余按上游故障处理。
  */
-export async function generateReason(
+export async function composeReasonWording(
   config: DeepseekConfig,
   card: ReasonCard,
   fetchImpl: typeof fetch = fetch,
@@ -82,9 +82,9 @@ export async function generateReason(
   if (config.apiKey === "") throw new ReasonUnavailableError("未配置 DEEPSEEK_API_KEY");
 
   const started = Date.now();
-  let res: Response;
+  let body: { choices?: { message?: { content?: unknown } }[] };
   try {
-    res = await fetchImpl(`${config.baseUrl}/chat/completions`, {
+    const res = await fetchImpl(`${config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
       body: JSON.stringify({
@@ -93,25 +93,33 @@ export async function generateReason(
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: JSON.stringify(card) },
         ],
+        // 一句措辞不需要推理链；deepseek-flash 默认 thinking=high，显式关掉才不花预算（官方 Thinking Mode 文档）。
+        thinking: { type: "disabled" },
         max_tokens: MAX_TOKENS,
         temperature: 0.2,
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+    if (!res.ok) throw new Error(`DeepSeek 返回 ${res.status}`);
+    body = (await res.json()) as typeof body;
   } catch (error) {
-    // 超时由 `AbortSignal.timeout` 以 DOMException 拒绝；DOMException 不是 Error 子类，按 name 认。
+    // 超时由 `AbortSignal.timeout` 以 DOMException 拒绝（头都没回来或读到一半都可能）；DOMException 不是 Error 子类，按 name 认。
     if (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "TimeoutError") {
       throw new ReasonTimeoutError("措辞请求超时");
     }
+    // JSON 解析失败的 message 会内嵌一段响应体，不能带进日志。
+    if (error instanceof SyntaxError) throw new Error("DeepSeek 响应不是 JSON");
     throw error;
   }
-  if (!res.ok) throw new Error(`DeepSeek 返回 ${res.status}`);
 
-  const body = (await res.json()) as { choices?: { message?: { content?: unknown } }[] };
   const content = body.choices?.[0]?.message?.content;
   const text = typeof content === "string" ? content.trim() : "";
   if (text === "") throw new Error("DeepSeek 没有给出措辞");
   return { text, elapsedMs: Date.now() - started };
+}
+
+function isRuleId(value: unknown): value is RuleId {
+  return typeof value === "string" && (RULE_IDS as readonly string[]).includes(value);
 }
 
 function text(value: unknown, min: number, max: number): string | null {

@@ -69,7 +69,7 @@ const RULE_WORDINGS: Record<RuleId, string> = {
 };
 
 /** 一张卡被问过「为什么」之后的状态：加载中，或者一句话（AI 措辞 / 规则回落）。 */
-type WhyState = { status: "loading" } | { status: "ready"; text: string; ai: boolean };
+type WhyState = { status: "loading" } | { status: "ready"; text: string };
 
 /** 首次主动排序后要说的话：动了哪一条、从第几位到第几位。 */
 interface OrderNotice {
@@ -177,6 +177,9 @@ export function App() {
     rest.splice(to, 0, moved);
     // 落盘的是整份可见顺序 ⇒ 这些卡从这一次起都归手动区，命中标记一并去掉，与下一次刷新看到的一致（ADR-0009）。
     setList({ ...list, entries: rest.map(({ learned, ...entry }) => entry) });
+    // 旧句是按档位与学习信号说的：拖过之后整份清单归手动区、命中标记被剥掉，
+    // 「排在最前面」「连续置顶」就不再为真，一句都不留（ADR-0009、ADR-0013）。
+    setWhy({});
     saveManualOrder(rest.map((entry) => entry.task.id));
     // 分组键当场算下来存：这一轮之后那条任务可能从清单上消失（关掉、转派），届时没人能重算它属于哪个来源。
     appendLearningRecord({
@@ -207,15 +210,22 @@ export function App() {
     if (why[id]?.status === "loading") return;
     const session = live && API_BASE !== "" ? adoptSessionFromUrl() : null;
     if (session === null) {
-      setWhy((one) => ({ ...one, [id]: { status: "ready", text: ruleWording(entry), ai: false } }));
+      setWhy((one) => ({ ...one, [id]: { status: "ready", text: ruleWording(entry) } }));
       return;
     }
     setWhy((one) => ({ ...one, [id]: { status: "loading" } }));
     try {
       const reply = await requestReason(API_BASE, session, reasonCardOf(entry));
-      setWhy((one) => ({ ...one, [id]: { status: "ready", text: reply.text, ai: true } }));
-    } catch {
-      setWhy((one) => ({ ...one, [id]: { status: "ready", text: ruleWording(entry), ai: false } }));
+      setWhy((one) => ({ ...one, [id]: { status: "ready", text: reply.text } }));
+    } catch (error) {
+      // 会话失效与取数走同一条出路：忘掉它、把角落换成重新连接，这张卡仍回落到规则句。
+      if (error instanceof UnauthenticatedError) {
+        forgetSession();
+        setHasSession(false);
+        setAuth(null);
+        setReconnect(true);
+      }
+      setWhy((one) => ({ ...one, [id]: { status: "ready", text: ruleWording(entry) } }));
     }
   }
 

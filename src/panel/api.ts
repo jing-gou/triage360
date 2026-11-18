@@ -4,6 +4,7 @@
  */
 
 import type { Tier } from "../core/provider";
+import type { RuleId } from "../core/today-list";
 
 const SESSION_KEY = "triage360:session:v1";
 
@@ -87,7 +88,7 @@ export async function revokeSession(base: string, session: string): Promise<void
 /** 送给服务端做措辞的那张卡：只有元数据，正文、评论、diff 一概不在这里（#8）。 */
 export interface ReasonCard {
   title: string;
-  reason: string;
+  reason: RuleId;
   learned?: { group: string; hits: number };
   dueAt?: string;
   duePrecision?: "day" | "instant";
@@ -96,7 +97,6 @@ export interface ReasonCard {
 
 export interface ReasonReply {
   text: string;
-  elapsedMs: number;
 }
 
 /** 单张卡的理由：服务端 1.8 秒超时；客户端多留 200ms 当兜底，超了就是失败，由调用方回落。 */
@@ -109,7 +109,7 @@ export async function requestReason(base: string, session: string, card: ReasonC
   });
   if (res.status === 401) throw new UnauthenticatedError(`reason 返回 401`);
   if (!res.ok) throw new Error(`reason 返回 ${res.status}`);
-  const body = (await res.json()) as { text?: unknown; elapsedMs?: unknown };
+  const body = (await res.json()) as { text?: unknown };
   if (typeof body.text !== "string" || body.text === "") throw new Error("reason 没有给出文案");
-  return { text: body.text, elapsedMs: typeof body.elapsedMs === "number" ? body.elapsedMs : 0 };
+  return { text: body.text };
 }

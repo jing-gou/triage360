@@ -4,7 +4,7 @@ import type { Tier } from "../src/core/provider";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
 import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier, missingScopes, SCOPES } from "./github-oauth";
-import { generateReason, parseReasonCard, ReasonTimeoutError, ReasonUnavailableError } from "./reason";
+import { composeReasonWording, parseReasonCard, ReasonTimeoutError, ReasonUnavailableError } from "./reason";
 import type { EncryptedStore } from "./store";
 
 /**
@@ -83,7 +83,7 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
       }
 
       if (req.method === "POST" && url.pathname === "/api/reason") {
-        return await reason(req, res);
+        return await reasonWording(req, res);
       }
 
       if (req.method === "POST" && url.pathname === "/api/logout") {
@@ -186,16 +186,16 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
 
   /**
    * 单张卡的理由（#8）：同步等一句措辞，规则理由在浏览器那侧已经先渲染好，这里失败也不留空白。
-   * 只收元数据（`parseReasonCard` 逐字段白名单），日志只记结果与耗时。
+   * 只收元数据（`parseReasonCard` 逐字段白名单），日志只记结果、耗时与失败类型。
    */
-  async function reason(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function reasonWording(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const id = bearerOf(req);
     if (id === null || store.find(id) === undefined) return json(res, 401, { error: "unauthenticated" });
     const body = await readJsonBody(req);
     const card = body === null ? null : parseReasonCard(body.card);
     if (card === null) return json(res, 400, { error: "bad_card" });
     try {
-      const result = await generateReason(config.deepseek, card);
+      const result = await composeReasonWording(config.deepseek, card);
       console.log(`[reason] ok in ${result.elapsedMs}ms`);
       return json(res, 200, result);
     } catch (error) {
