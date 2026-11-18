@@ -1,7 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Provider, Scope, Tier } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
-import { buildTodayList, type RuleId, type TodayList } from "../core/today-list";
+import { buildTodayList, type ListEntry, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
 import { createGithubProvider } from "../providers/github";
 import {
@@ -10,11 +10,13 @@ import {
   fetchGithubItems,
   forgetSession,
   requestAuthUrl,
+  requestReason,
   revokeSession,
   UnauthenticatedError,
   type GithubAuth,
   type TierGrant,
 } from "./api";
+import type { ReasonCard } from "../core/reason-card";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { clearLocalRecords, hasLocalRecords } from "./local-records";
 import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrder } from "./manual-order";
@@ -58,6 +60,18 @@ const REASON_LABELS: Record<RuleId, string> = {
   dueLater: "未到截止日",
 };
 
+/** 纯规则理由：AI 不可用或失败时的回落句。有学习信号时同一句里说清两个来源层（AC#6）。
+ *  只说档位、不承诺名次：拖过之后位置归访客，句子仍得为真。 */
+const RULE_WORDINGS: Record<RuleId, string> = {
+  overdue: "它已经逾期，按规则落在逾期这一档。",
+  dueToday: "它今天到期，按规则落在今日到期这一档。",
+  noDeadline: "它没有写截止时间，按规则排在未写截止日的那一档。",
+  dueLater: "它的截止日在更晚的一天，按规则排在未到截止日的那一档。",
+};
+
+/** 一张卡被问过「为什么」之后的状态：加载中，或者一句话（AI 措辞 / 规则回落）。 */
+type WhyState = { status: "loading" } | { status: "ready"; text: string };
+
 /** 首次主动排序后要说的话：动了哪一条、从第几位到第几位。 */
 interface OrderNotice {
   title: string;
@@ -82,6 +96,10 @@ export function App() {
   const [hasLocal, setHasLocal] = useState(false);
   /** 服务端报回来的各档实际授权；只有连上真实会话之后才有。 */
   const [auth, setAuth] = useState<GithubAuth | null>(null);
+  /** 每张卡被问过「为什么」之后的那句话；键是卡片标识（合并卡即表头 id）。 */
+  const [why, setWhy] = useState<Record<string, WhyState>>({});
+  // 拖拽会把在途请求的答案作废：请求发出时记下代数，回来时代数变了就丢掉，不把旧句写回手动区。
+  const whyEpoch = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -162,6 +180,10 @@ export function App() {
     rest.splice(to, 0, moved);
     // 落盘的是整份可见顺序 ⇒ 这些卡从这一次起都归手动区，命中标记一并去掉，与下一次刷新看到的一致（ADR-0009）。
     setList({ ...list, entries: rest.map(({ learned, ...entry }) => entry) });
+    // 旧句是按档位与学习信号说的：拖过之后整份清单归手动区、命中标记被剥掉，
+    // 「排在最前面」「连续置顶」就不再为真，一句都不留（ADR-0009、ADR-0013）。
+    setWhy({});
+    whyEpoch.current += 1;
     saveManualOrder(rest.map((entry) => entry.task.id));
     // 分组键当场算下来存：这一轮之后那条任务可能从清单上消失（关掉、转派），届时没人能重算它属于哪个来源。
     appendLearningRecord({
@@ -180,6 +202,38 @@ export function App() {
   function dismissNotice(): void {
     markOrderNoticeSeen();
     setNotice(null);
+  }
+
+  /**
+   * 「为什么是这几条」（#8）：规则理由在本机就能算，AI 只是把它说成一句人话。
+   * 没连真实会话、接口失败、客户端 2 秒兜底到点——都回落到同一句规则理由，卡片上不会出现空白。
+   * 只有真会话才发请求：样例屏不碰网络，连不上时也不拿旧租户去试。
+   */
+  async function askWhy(entry: ListEntry): Promise<void> {
+    const id = entry.task.id;
+    if (why[id]?.status === "loading") return;
+    const session = live && API_BASE !== "" ? adoptSessionFromUrl() : null;
+    if (session === null) {
+      setWhy((one) => ({ ...one, [id]: { status: "ready", text: ruleWording(entry) } }));
+      return;
+    }
+    setWhy((one) => ({ ...one, [id]: { status: "loading" } }));
+    const epoch = whyEpoch.current;
+    try {
+      const reply = await requestReason(API_BASE, session, reasonCardOf(entry));
+      if (whyEpoch.current !== epoch) return;
+      setWhy((one) => ({ ...one, [id]: { status: "ready", text: reply.text } }));
+    } catch (error) {
+      if (whyEpoch.current !== epoch) return;
+      // 会话失效与取数走同一条出路：忘掉它、把角落换成重新连接，这张卡仍回落到规则句。
+      if (error instanceof UnauthenticatedError) {
+        forgetSession();
+        setHasSession(false);
+        setAuth(null);
+        setReconnect(true);
+      }
+      setWhy((one) => ({ ...one, [id]: { status: "ready", text: ruleWording(entry) } }));
+    }
   }
 
   function openDialog(next: Dialog): void {
@@ -246,9 +300,16 @@ export function App() {
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
       <ol className="cards">
-        {list.entries.map(({ task, reason, learned, mergedFrom }, index) => {
+        {list.entries.map((entry, index) => {
+          const { task, reason, learned, mergedFrom } = entry;
           // 合并卡的来源槽一格一个来源，各自跳到各自的记录；没合并的卡片 DOM 不变。
           const sources = mergedFrom ?? [task];
+          // 合并卡只解释表头这一条，其余来源以一句标注带出（#8 AC#5）——各写一条就是另一件事了。
+          const otherSources =
+            mergedFrom === undefined
+              ? []
+              : [...new Set(mergedFrom.slice(1).map((one) => sourceLabel(one.providerId, live).label))];
+          const whyState = why[task.id];
           const samples = [
             ...new Set(
               sources
@@ -314,6 +375,27 @@ export function App() {
                 {/* 命中行只在被抬起来的那些卡上出现（AC#3）；手动区里的卡不带它，构建器已经把 `learned` 剥掉了。 */}
                 {learned !== undefined && <span>因为你连续把 {learned.group} 排在前面</span>}
                 <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
+                {/* 展开前只是一个弱化入口；展开后那句话整行落到下面，不挤压这一行的元数据。 */}
+                {whyState === undefined ? (
+                  <button
+                    aria-label={`为什么是这几条：${task.title}`}
+                    className="card-why"
+                    onClick={() => void askWhy(entry)}
+                    title="为什么是这几条"
+                    type="button"
+                  >
+                    为什么
+                  </button>
+                ) : whyState.status === "loading" ? (
+                  <span className="card-why-line">正在想…</span>
+                ) : (
+                  <span className="card-why-line">
+                    {whyState.text}
+                    {otherSources.length > 0 && (
+                      <span className="card-why-note">（这张卡还来自 {otherSources.join("、")}）</span>
+                    )}
+                  </span>
+                )}
               </p>
             </li>
           );
@@ -335,7 +417,7 @@ export function App() {
           })
           .join(" · ")}
         {" · "}
-        {API_BASE !== "" && !live && (
+        {API_BASE !== "" && (!live || reconnect) && (
           <>
             <button className="corner-link" onClick={() => openDialog("consent")} type="button">
               {reconnect ? "连接已失效 · 重新连接 GitHub" : "连接 GitHub"}
@@ -343,7 +425,7 @@ export function App() {
             {" · "}
           </>
         )}
-        {(live || hasSession) && (
+        {!reconnect && (live || hasSession) && (
           <>
             <button className="corner-link" onClick={() => openDialog("revoke")} type="button">
               撤销授权
@@ -351,7 +433,7 @@ export function App() {
             {" · "}
           </>
         )}
-        {live && (
+        {!reconnect && live && (
           <>
             <button className="corner-link" onClick={() => openDialog("tiers")} type="button">
               {authNote === null ? "授权档位" : `授权档位 · ${authNote}`}
@@ -408,7 +490,11 @@ export function App() {
             token 只用来读指派给你、还没关闭的 issue 的标题、状态、更新时间与截止时间。正文、评论、diff、代码永不入库。
           </p>
           <p className="notice-body">
-            谁看得见：只有你自己。面板没有共享入口，服务端不把这些数据交给任何第三方；日志不记 token、授权头与响应体。
+            点卡片上的「为什么」时，服务端只把这张卡的标题与排序元数据（档位、截止、更新时间、学习信号）发给 DeepSeek
+            生成一句措辞；正文、评论、diff 不参与，日志只记结果、耗时与失败类型。
+          </p>
+          <p className="notice-body">
+            谁看得见：只有你自己。面板没有共享入口；除了上一段说的 DeepSeek 措辞通道（只收标题与排序元数据），服务端不把这些数据交给其他第三方；日志不记 token、授权头与响应体。
           </p>
           <p className="notice-body">
             token 加密落盘：数据库文件泄露不导致凭据泄露。但这挡不住服务器被完全控制——进程运行时手里有密钥。
@@ -548,6 +634,25 @@ export function App() {
       )}
     </main>
   );
+}
+
+/** 纯规则那句：没有 AI 时的唯一措辞来源，也是 AI 失败与超时时的回落。 */
+function ruleWording(entry: ListEntry): string {
+  const base = RULE_WORDINGS[entry.reason];
+  if (entry.learned === undefined) return base;
+  return `${base}你最近连续把 ${entry.learned.group} 排在前面，同档内它因此被提前。`;
+}
+
+/** 上行给措辞通道的那张卡：白名单字段，正文、评论与 diff 不在其中（#8 AC#2）。 */
+function reasonCardOf(entry: ListEntry): ReasonCard {
+  return {
+    title: entry.task.title,
+    reason: entry.reason,
+    ...(entry.learned === undefined ? {} : { learned: entry.learned }),
+    ...(entry.task.dueAt === undefined ? {} : { dueAt: entry.task.dueAt }),
+    ...(entry.task.duePrecision === undefined ? {} : { duePrecision: entry.task.duePrecision }),
+    updatedAt: entry.task.updatedAt,
+  };
 }
 
 /** 弹层里一行「实际授予」：`null` 是响应头缺失（不知道），空数组是「有头但没列 scope」，两种都是真值，不吞掉。 */

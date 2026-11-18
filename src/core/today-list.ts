@@ -79,8 +79,10 @@ export type SameEvent = (a: Task, b: Task) => boolean;
 /**
  * 命中规则的标识，不是句子。#8「为什么是这几条」与界面措辞要的是这个标识，
  * 分数留给 #10 学习加权再加——现在没有规则需要它。
+ * 运行时值也留一份：服务端校验上行卡片的 `reason` 时用它，别处再手抄四个字符串就会分叉。
  */
-export type RuleId = "overdue" | "dueToday" | "noDeadline" | "dueLater";
+export const RULE_IDS = ["overdue", "dueToday", "noDeadline", "dueLater"] as const;
+export type RuleId = (typeof RULE_IDS)[number];
 
 /**
  * 档位表：谁排在谁前面。顺序只由这张表和档内比较决定，规则本身不写数字。

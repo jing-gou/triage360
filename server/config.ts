@@ -13,6 +13,14 @@ export interface ServerConfig {
   /** 加密账本与密钥的目录；密钥与账本都只住这里，永不进仓库（#13）。 */
   dataDir: string;
   github: { clientId: string; clientSecret: string };
+  /** 「为什么是这几条」的措辞通道（#8）；钥匙可以为空：空即未配置，接口回 503，面板回落规则理由。 */
+  deepseek: DeepseekConfig;
+}
+
+export interface DeepseekConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
@@ -27,6 +35,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
     github: {
       clientId: required(env, "GITHUB_CLIENT_ID"),
       clientSecret: required(env, "GITHUB_CLIENT_SECRET"),
+    },
+    // 钥匙缺失不拦住启动：只有这一条链路会 503，其余面板照常工作。
+    deepseek: {
+      apiKey: env.DEEPSEEK_API_KEY ?? "",
+      baseUrl: trimSlash(env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com"),
+      model: env.DEEPSEEK_MODEL ?? "deepseek-flash",
     },
   };
 }

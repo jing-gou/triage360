@@ -4,6 +4,7 @@
  */
 
 import type { Tier } from "../core/provider";
+import type { ReasonCard } from "../core/reason-card";
 
 const SESSION_KEY = "triage360:session:v1";
 
@@ -82,4 +83,23 @@ export async function revokeSession(base: string, session: string): Promise<void
     headers: { Authorization: `Bearer ${session}` },
   });
   if (!res.ok && res.status !== 401) throw new Error(`logout 返回 ${res.status}`);
+}
+
+export interface ReasonReply {
+  text: string;
+}
+
+/** 单张卡的理由：服务端 1.8 秒超时；客户端多留 200ms 当兜底，超了就是失败，由调用方回落。 */
+export async function requestReason(base: string, session: string, card: ReasonCard): Promise<ReasonReply> {
+  const res = await fetch(`${base}/api/reason`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ card }),
+    signal: AbortSignal.timeout(2000),
+  });
+  if (res.status === 401) throw new UnauthenticatedError(`reason 返回 401`);
+  if (!res.ok) throw new Error(`reason 返回 ${res.status}`);
+  const body = (await res.json()) as { text?: unknown };
+  if (typeof body.text !== "string" || body.text === "") throw new Error("reason 没有给出文案");
+  return { text: body.text };
 }

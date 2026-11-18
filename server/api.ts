@@ -4,6 +4,13 @@ import type { Tier } from "../src/core/provider";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
 import { authorizeUrl, createGithubHttp, exchangeCode, fetchIdentity, isTier, missingScopes, SCOPES } from "./github-oauth";
+import {
+  composeReasonWording,
+  parseReasonCard,
+  ReasonQualityError,
+  ReasonTimeoutError,
+  ReasonUnavailableError,
+} from "./reason";
 import type { EncryptedStore } from "./store";
 
 /**
@@ -79,6 +86,10 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
 
       if (req.method === "GET" && url.pathname === "/api/items") {
         return await items(req, res);
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/reason") {
+        return await reasonWording(req, res);
       }
 
       if (req.method === "POST" && url.pathname === "/api/logout") {
@@ -177,6 +188,39 @@ export function createHandler({ config, store, now }: HandlerDeps): (req: Incomi
     // 两档都不可用：整条租户删掉，让面板回到「重新连接」而不是留一条死记录。
     if (!store.delete(id)) console.error("[items] delete verification failed");
     return json(res, 401, { error: "reconnect" });
+  }
+
+  /**
+   * 单张卡的理由（#8）：同步等一句措辞，规则理由在浏览器那侧已经先渲染好，这里失败也不留空白。
+   * 只收元数据（`parseReasonCard` 逐字段白名单），日志只记结果、耗时与失败类型。
+   */
+  async function reasonWording(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const id = bearerOf(req);
+    if (id === null || store.find(id) === undefined) return json(res, 401, { error: "unauthenticated" });
+    const body = await readJsonBody(req);
+    const card = body === null ? null : parseReasonCard(body.card);
+    if (card === null) return json(res, 400, { error: "bad_card" });
+    try {
+      const result = await composeReasonWording(config.deepseek, card);
+      console.log(`[reason] ok in ${result.elapsedMs}ms`);
+      return json(res, 200, result);
+    } catch (error) {
+      if (error instanceof ReasonUnavailableError) {
+        console.warn("[reason] unavailable: no api key");
+        return json(res, 503, { error: "unavailable" });
+      }
+      if (error instanceof ReasonTimeoutError) {
+        console.warn("[reason] timeout");
+        return json(res, 504, { error: "timeout" });
+      }
+      if (error instanceof ReasonQualityError) {
+        console.warn(`[reason] rejected: ${error.message}`);
+        return json(res, 422, { error: "wording_rejected" });
+      }
+      // 失败也只记结果类型：上游原文可能带别的东西，不进 journalctl。
+      console.error(`[reason] upstream failed: ${error instanceof Error ? error.message : "unknown"}`);
+      throw error;
+    }
   }
 }
 
