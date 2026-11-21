@@ -24,6 +24,9 @@ export type GiteeSnapshot =
   | { status: "unavailable"; detail: string };
 
 export class Upstream {
+  /** 同一租户的取数只跑一份：两个请求同时看见过期就会各换一次，后失败的那个会把刚轮换好的 token 写回旧的。 */
+  private readonly giteeInFlight = new Map<string, Promise<GiteeSnapshot | null>>();
+
   constructor(
     private readonly config: ServerConfig,
     private readonly store: EncryptedStore,
@@ -68,6 +71,18 @@ export class Upstream {
    * 刷新失败但旧 token 还未过期就继续用；已经过期才摘掉授权并显式回报 reauth。
    */
   async gitee(tenant: Tenant, sessionId: string | null, isDemoTenant: boolean): Promise<GiteeSnapshot | null> {
+    if (tenant.gitee === undefined) return null;
+    const key = sessionId ?? `login:${tenant.giteeLogin ?? tenant.login}`;
+    const running = this.giteeInFlight.get(key);
+    if (running !== undefined) return await running;
+    const run = this.fetchGitee(tenant, sessionId, isDemoTenant).finally(() => {
+      this.giteeInFlight.delete(key);
+    });
+    this.giteeInFlight.set(key, run);
+    return await run;
+  }
+
+  private async fetchGitee(tenant: Tenant, sessionId: string | null, isDemoTenant: boolean): Promise<GiteeSnapshot | null> {
     const stored = tenant.gitee;
     if (stored === undefined) return null;
     const persist = (next: CredentialRecord): void => {

@@ -114,6 +114,8 @@ describe("seam 1 · 真实 Gitee provider：上一轮条目按 id 补取", () =>
     url: "https://gitee.com/jing-gou/triage360/issues/IDLSUI",
     state: "open",
     updatedAt: "2026-11-16T00:20:00.000Z",
+    dueAt: undefined,
+    duePrecision: undefined,
   };
 
   it("从视图里消失的条走单仓库端点；取回是 closed 就收敛掉", async () => {

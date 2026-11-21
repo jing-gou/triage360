@@ -99,8 +99,8 @@ export function App() {
   const [demo, setDemo] = useState(false);
   const live = connected !== null && !demo;
   const [reconnect, setReconnect] = useState(false);
-  /** Gitee 这一轮没取到数据时的一句标注；连上且取到就是 `null`（常态安静）。 */
-  const [giteeNote, setGiteeNote] = useState<string | null>(null);
+  /** 唯一接线的 uniform 档（Gitee）这一轮没取到数据时的标注；常态为 `null`，界面按 kind 取用。 */
+  const [uniformNote, setUniformNote] = useState<string | null>(null);
   /** 浏览器手里还握着一枚会话标识：即便这一屏没连上，撤销入口也得在——否则旧租户没人能清。 */
   const [hasSession, setHasSession] = useState(false);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -151,7 +151,7 @@ export function App() {
           setAuth(payload.auth);
           setConnected(payload.connected);
           setDemo(false);
-          setGiteeNote(
+          setUniformNote(
             payload.gitee.status === "reauth"
               ? "Gitee 授权已失效"
               : payload.gitee.status === "unavailable"
@@ -169,7 +169,7 @@ export function App() {
           if (alive) {
             setAuth(null);
             setConnected(null);
-            setGiteeNote(null);
+            setUniformNote(null);
             setReconnect(true);
           }
         }
@@ -196,7 +196,7 @@ export function App() {
           setConnected(snapshot.connected);
           setDemo(true);
           setAuth(null);
-          setGiteeNote(null);
+          setUniformNote(null);
           return;
         } catch {
           // 演示快照也不可用就退回样例；这一屏仍不空白。
@@ -216,7 +216,7 @@ export function App() {
       setList(next);
       setConnected(null);
       setDemo(false);
-      setGiteeNote(null);
+      setUniformNote(null);
     }
 
     load();
@@ -370,7 +370,7 @@ export function App() {
   const authNote =
     auth === null ? null : auth.dropped.length > 0 ? "授权已失效" : scopeGap ? "实际授权已缩小" : null;
   // 两家的问题都收进同一个入口：常态安静，出问题时角标说得出是哪一家。
-  const tierNote = [authNote, giteeNote].filter((one): one is string => one !== null).join(" · ") || null;
+  const tierNote = [authNote, uniformNote].filter((one): one is string => one !== null).join(" · ") || null;
 
   return (
     <main className="panel">
@@ -675,7 +675,7 @@ export function App() {
             if (descriptor.auth.kind === "uniform") {
               // 没有档位的平台（Gitee）也在这里接：一次授权一枚令牌，续期失败时从这里重来。
               const wired = wiredProviders.some((one) => one.id === provider.id);
-              const giteeConnected = connected?.gitee === true;
+              const uniformConnected = connected?.gitee === true;
               return (
                 <div className="tier-group" key={provider.id}>
                   <p className="tier-group-title">{providerLabel}</p>
@@ -683,11 +683,11 @@ export function App() {
                     <div className="tier-body">
                       <span className="tier-name">一次授权</span>
                       <span className="tier-scope">
-                        {giteeConnected ? "已连接" : "未连接"} · {descriptor.auth.note}
+                        {uniformConnected ? "已连接" : "未连接"} · {descriptor.auth.note}
                       </span>
-                      {provider.id === "gitee" && giteeNote !== null && (
+                      {wired && uniformNote !== null && (
                         <span className="tier-warn">
-                          {giteeNote}：access token 一天过期，自动续期没成功后需要重新授权。
+                          {uniformNote}：access token 一天过期，自动续期没成功后需要重新授权。
                         </span>
                       )}
                     </div>
@@ -698,7 +698,7 @@ export function App() {
                         onClick={() => void authorizeGitee()}
                         type="button"
                       >
-                        {giteeConnected ? "重新授权" : "授权"}
+                        {uniformConnected ? "重新授权" : "授权"}
                       </button>
                     )}
                   </div>

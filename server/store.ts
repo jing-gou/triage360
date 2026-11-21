@@ -193,8 +193,11 @@ export class EncryptedStore {
   }
 
   private recordByLogin(login: string): StoredTenant | undefined {
-    return this.tenants.find(
-      (one) => one.githubLogin === login || one.login === login || one.giteeLogin === login,
+    // GitHub 登录名是演示账号的第一身份；`login` 只是展示名（先连哪家算哪家），
+    // 同名但没连 GitHub 的账不该被当成演示租户。
+    return (
+      this.tenants.find((one) => one.githubLogin === login) ??
+      this.tenants.find((one) => one.login === login || one.giteeLogin === login)
     );
   }
 

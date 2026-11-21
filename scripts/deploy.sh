@@ -28,6 +28,10 @@ set +a
   "${FRONTEND_URL:?deploy.env 缺 FRONTEND_URL}" \
   "${GITHUB_CLIENT_ID:?deploy.env 缺 GITHUB_CLIENT_ID}" \
   "${GITHUB_CLIENT_SECRET:?deploy.env 缺 GITHUB_CLIENT_SECRET}"
+# 写一半不是「没配 Gitee」，而是配错了；脚本替人接住，别让它悄悄少写两行。
+if { [ -n "${GITEE_CLIENT_ID:-}" ] && [ -z "${GITEE_CLIENT_SECRET:-}" ]; } || { [ -z "${GITEE_CLIENT_ID:-}" ] && [ -n "${GITEE_CLIENT_SECRET:-}" ]; }; then
+  die "GITEE_CLIENT_ID 与 GITEE_CLIENT_SECRET 必须成对"
+fi
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8787}
 # 加密存储与密钥的落点（#13）：密钥文件 store.key 与数据同目录，都只有服务账号能读。

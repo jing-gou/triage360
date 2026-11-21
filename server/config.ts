@@ -55,7 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
         ? null
         : {
             login: env.DEMO_LOGIN,
-            refreshMs: Math.max(60_000, Number(env.DEMO_REFRESH_MINUTES ?? 15) * 60_000),
+            refreshMs: demoRefreshMs(env.DEMO_REFRESH_MINUTES),
             resetToken: env.DEMO_RESET_TOKEN === undefined || env.DEMO_RESET_TOKEN === "" ? null : env.DEMO_RESET_TOKEN,
           },
     // 钥匙缺失不拦住启动：只有这一条链路会 503，其余面板照常工作。
@@ -85,6 +85,12 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (value === undefined || value === "") throw new Error(`缺少环境变量 ${name}`);
   return value;
+}
+
+/** 写错或写成 0 就退回 15 分钟；`NaN` 交给 setInterval 会变成 1ms 的空转。 */
+function demoRefreshMs(raw: string | undefined): number {
+  const minutes = Number(raw ?? 15);
+  return Number.isFinite(minutes) && minutes > 0 ? Math.max(60_000, minutes * 60_000) : 15 * 60_000;
 }
 
 function trimSlash(url: string): string {
