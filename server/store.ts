@@ -149,9 +149,9 @@ export class EncryptedStore {
     this.commitGitee(record, this.encryptGitee(credential));
   }
 
-  /** 演示租户的刷新没有浏览器会话，按登录名更新；判据和 putGitee 相同。 */
-  putGiteeByLogin(login: string, credential: GiteeCredential): void {
-    const record = this.recordByLogin(login);
+  /** 演示租户的刷新没有浏览器会话，按 Gitee 登录名更新；判据和 putGitee 相同。 */
+  putGiteeByGiteeLogin(login: string, credential: GiteeCredential): void {
+    const record = this.recordByGiteeLogin(login);
     if (record === undefined || record.gitee === undefined) throw new Error("Gitee 授权不存在");
     this.commitGitee(record, this.encryptGitee(credential));
   }
@@ -164,16 +164,16 @@ export class EncryptedStore {
     this.finishRemoval(record, sessionId);
   }
 
-  removeGiteeByLogin(login: string): void {
-    const record = this.recordByLogin(login);
+  removeGiteeByGiteeLogin(login: string): void {
+    const record = this.recordByGiteeLogin(login);
     if (record === undefined) return;
     delete record.gitee;
     this.finishRemoval(record, null);
   }
 
-  /** 演示租户的那一档 GitHub 被 401 时按登录名摘掉，不依赖浏览器会话。 */
-  removeGrantByLogin(login: string, tier: Tier): void {
-    const record = this.recordByLogin(login);
+  /** 演示租户的那一档 GitHub 被 401 时按 GitHub 登录名摘掉，不依赖浏览器会话。 */
+  removeGrantByGithubLogin(login: string, tier: Tier): void {
+    const record = this.recordByGithubLogin(login);
     if (record === undefined) return;
     delete record.grants[tier];
     this.finishRemoval(record, null);
@@ -183,22 +183,23 @@ export class EncryptedStore {
    * 后台取演示租户：没有会话标识，返回的 `id` 是空串（不交给浏览器）。
    * 顺手续期 lastSeenAt——定时刷新就是它的活动证据，30 天清除不该把 demo 扫掉。
    */
-  findByLogin(login: string): Tenant | undefined {
+  findByGithubLogin(login: string): Tenant | undefined {
     this.prune(this.now());
-    const record = this.recordByLogin(login);
+    const record = this.recordByGithubLogin(login);
     if (record === undefined) return undefined;
     record.lastSeenAt = this.now();
     this.persist();
     return this.materialize(record, "");
   }
 
-  private recordByLogin(login: string): StoredTenant | undefined {
-    // GitHub 登录名是演示账号的第一身份；`login` 只是展示名（先连哪家算哪家），
-    // 同名但没连 GitHub 的账不该被当成演示租户。
-    return (
-      this.tenants.find((one) => one.githubLogin === login) ??
-      this.tenants.find((one) => one.login === login || one.giteeLogin === login)
-    );
+  // 两家登录名是两条身份轴：`login` 只是展示名（先连哪家算哪家），拿它查账会把
+  // 同名的另一个账号当成目标，续期或删除就落到别人头上。
+  private recordByGithubLogin(login: string): StoredTenant | undefined {
+    return this.tenants.find((one) => one.githubLogin === login);
+  }
+
+  private recordByGiteeLogin(login: string): StoredTenant | undefined {
+    return this.tenants.find((one) => one.giteeLogin === login);
   }
 
   private encryptGitee(credential: GiteeCredential): StoredGitee {

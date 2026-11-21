@@ -14,7 +14,7 @@ import {
   ReasonUnavailableError,
 } from "./reason";
 import type { EncryptedStore } from "./store";
-import { Upstream, type GiteeSnapshot } from "./upstream";
+import type { GiteeSnapshot, Upstream } from "./upstream";
 
 /**
  * OAuth 回调 handler 与 HTTP 细节按 spec 的 Testing Decisions 不写自动化测试
@@ -42,12 +42,13 @@ export interface HandlerDeps {
   now: () => number;
   /** 演示快照；未配置 `DEMO_LOGIN` 时为 null，两个 demo 路由都不存在。 */
   demo: DemoRefresher | null;
+  /** 与定时刷新共用的一份：同一账号的 Gitee 轮换必须走同一张 in-flight 表。 */
+  upstream: Upstream;
 }
 
-export function createHandler({ config, store, now, demo }: HandlerDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+export function createHandler({ config, store, now, demo, upstream }: HandlerDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   // state → 待完成的授权；走完一次就删，回调地址被重放也换不到第二个 token。
   const pendingStates = new Map<string, PendingAuth>();
-  const upstream = new Upstream(config, store, now);
 
   function startAuth(tier: Tier, sessionId: string | null): string {
     purgeExpired(pendingStates, now());
@@ -174,7 +175,12 @@ export function createHandler({ config, store, now, demo }: HandlerDeps): (req: 
     const identity = await fetchIdentity(grant.accessToken);
     // 两档 token 必须属于同一个账号：第二档换了账号就拒绝，不把两枚 token 混进一条租户。
     const existing = pending.sessionId === null ? undefined : store.find(pending.sessionId);
-    if (existing !== undefined && existing.githubLogin !== undefined && existing.githubLogin !== identity.login) {
+    // v1 账本没有 githubLogin，那时的 login 就是 GitHub 名；Gitee 先连的账还没绑 GitHub 名，不拦首次绑定。
+    const githubBound =
+      existing === undefined
+        ? undefined
+        : existing.githubLogin ?? (existing.giteeLogin === undefined ? existing.login : undefined);
+    if (githubBound !== undefined && githubBound !== identity.login) {
       console.warn("[cb/github] rejected: account mismatch");
       return text(res, 400, "这次授权的 GitHub 账号与已连接的账号不同，换回原账号再试。");
     }
@@ -227,7 +233,9 @@ export function createHandler({ config, store, now, demo }: HandlerDeps): (req: 
     // 两家各取各的：GitHub 的两档回退与 Gitee 的懒刷新都在 Upstream 里，一家的 401 / 刷新失败
     // 只摘这一家，另一家的条目照常返回；两家的 raw 形状不同，归一留给浏览器那侧的 provider。
     const github = await upstream.github(tenant, id);
-    const gitee = await upstream.gitee(tenant, id, false);
+    // 演示账号即使被维护者用会话打开，刷新也归定时器管：请求路径不续期。
+    const isDemoTenant = config.demo !== null && tenant.githubLogin === config.demo.login;
+    const gitee = await upstream.gitee(tenant, id, isDemoTenant);
 
     // 租户是 materialize 出来的副本：被摘掉的授权要在副本上同步删掉，否则响应还会报「已连接」。
     const githubConnected = tenant.grants.public !== undefined || tenant.grants.private !== undefined;

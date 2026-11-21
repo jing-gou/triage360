@@ -101,6 +101,8 @@ export function App() {
   const [reconnect, setReconnect] = useState(false);
   /** 唯一接线的 uniform 档（Gitee）这一轮没取到数据时的标注；常态为 `null`，界面按 kind 取用。 */
   const [uniformNote, setUniformNote] = useState<string | null>(null);
+  /** 不可达的原始原因（403 / User-Agent 等）：角标只留一句短话，细节放进档位弹层。 */
+  const [uniformDetail, setUniformDetail] = useState<string | null>(null);
   /** 浏览器手里还握着一枚会话标识：即便这一屏没连上，撤销入口也得在——否则旧租户没人能清。 */
   const [hasSession, setHasSession] = useState(false);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -158,6 +160,9 @@ export function App() {
                 ? "Gitee 暂不可达"
                 : null,
           );
+          setUniformDetail(
+            payload.gitee.status === "unavailable" ? (payload.gitee.detail ?? "上游没有给出原因。") : null,
+          );
           setReconnect(false);
           return;
         } catch (error) {
@@ -170,6 +175,7 @@ export function App() {
             setAuth(null);
             setConnected(null);
             setUniformNote(null);
+            setUniformDetail(null);
             setReconnect(true);
           }
         }
@@ -197,6 +203,7 @@ export function App() {
           setDemo(true);
           setAuth(null);
           setUniformNote(null);
+          setUniformDetail(null);
           return;
         } catch {
           // 演示快照也不可用就退回样例；这一屏仍不空白。
@@ -217,6 +224,7 @@ export function App() {
       setConnected(null);
       setDemo(false);
       setUniformNote(null);
+      setUniformDetail(null);
     }
 
     load();
@@ -675,7 +683,8 @@ export function App() {
             if (descriptor.auth.kind === "uniform") {
               // 没有档位的平台（Gitee）也在这里接：一次授权一枚令牌，续期失败时从这里重来。
               const wired = wiredProviders.some((one) => one.id === provider.id);
-              const uniformConnected = connected?.gitee === true;
+              // 连接态只对真实接线的 uniform 档成立；Jira / 飞书样例不跟着 Gitee 的会话说「已连接」。
+              const uniformConnected = wired && connected?.gitee === true;
               return (
                 <div className="tier-group" key={provider.id}>
                   <p className="tier-group-title">{providerLabel}</p>
@@ -683,11 +692,15 @@ export function App() {
                     <div className="tier-body">
                       <span className="tier-name">一次授权</span>
                       <span className="tier-scope">
-                        {uniformConnected ? "已连接" : "未连接"} · {descriptor.auth.note}
+                        {wired ? `${uniformConnected ? "已连接" : "未连接"} · ` : ""}
+                        {descriptor.auth.note}
                       </span>
                       {wired && uniformNote !== null && (
                         <span className="tier-warn">
-                          {uniformNote}：access token 一天过期，自动续期没成功后需要重新授权。
+                          {uniformNote}
+                          {uniformDetail === null
+                            ? "：access token 一天过期，自动续期没成功后需要重新授权。"
+                            : `：${uniformDetail}`}
                         </span>
                       )}
                     </div>

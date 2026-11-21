@@ -87,10 +87,11 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-/** 写错或写成 0 就退回 15 分钟；`NaN` 交给 setInterval 会变成 1ms 的空转。 */
+/** 写错、写成 0 或超出定时器上限就退回 15 分钟；`NaN` 与超界值交给 setInterval 都会变成 1ms 的空转。 */
 function demoRefreshMs(raw: string | undefined): number {
   const minutes = Number(raw ?? 15);
-  return Number.isFinite(minutes) && minutes > 0 ? Math.max(60_000, minutes * 60_000) : 15 * 60_000;
+  const ms = Number.isFinite(minutes) && minutes > 0 ? Math.max(60_000, minutes * 60_000) : 15 * 60_000;
+  return Math.min(ms, 2_147_483_647);
 }
 
 function trimSlash(url: string): string {

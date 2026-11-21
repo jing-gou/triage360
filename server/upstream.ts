@@ -5,7 +5,7 @@ import { createGithubProvider, GithubUpstreamError } from "../src/providers/gith
 import type { ServerConfig } from "./config";
 import { createGiteeHttp, refreshAccessToken } from "./gitee-oauth";
 import { createGithubHttp } from "./github-oauth";
-import type { EncryptedStore, Tenant } from "./store";
+import type { EncryptedStore, GiteeCredential, Tenant } from "./store";
 
 /**
  * 上游取数的共用路径：浏览器会话与演示租户的定时刷新都走这里。
@@ -23,8 +23,42 @@ export type GiteeSnapshot =
   | { status: "reauth" }
   | { status: "unavailable"; detail: string };
 
+/**
+ * 只放行 provider 归一化要用的字段（Q23 的字段边界）：正文、评论、diff 既不进 demo.json，
+ * 也不经 `/api/items` 发给浏览器；以后界面真要更多字段，先改这里再改声明。
+ */
+function githubMeta(item: RawItem): RawItem {
+  const milestone = item.milestone as { due_on?: unknown } | null | undefined;
+  return {
+    number: item.number,
+    title: item.title,
+    html_url: item.html_url,
+    state: item.state,
+    updated_at: item.updated_at,
+    milestone: milestone == null ? null : { due_on: milestone.due_on ?? null },
+    repository_url: item.repository_url,
+  };
+}
+
+function giteeMeta(item: RawItem): RawItem {
+  const repository = item.repository as { full_name?: unknown } | null | undefined;
+  return {
+    number: item.number,
+    title: item.title,
+    html_url: item.html_url,
+    state: item.state,
+    updated_at: item.updated_at,
+    deadline: item.deadline ?? null,
+    repository: repository == null ? null : { full_name: repository.full_name },
+  };
+}
+
 export class Upstream {
-  /** 同一租户的取数只跑一份：两个请求同时看见过期就会各换一次，后失败的那个会把刚轮换好的 token 写回旧的。 */
+  /**
+   * 同一份 Gitee 授权只跑一次刷新：两个请求同时看见过期就会各换一次，后失败的那个
+   * 会把刚轮换好的 token 写回旧的。键用 Gitee 登录名而不是会话——演示租户的定时器
+   * 与维护者自己的会话可能是同一份授权，只按会话锁不住这条竞态。
+   */
   private readonly giteeInFlight = new Map<string, Promise<GiteeSnapshot | null>>();
 
   constructor(
@@ -51,11 +85,11 @@ export class Upstream {
           this.store.setScopes(sessionId, tier, liveScopes);
           grant.scopes = liveScopes;
         }
-        return { items, used: tier, dropped };
+        return { items: items.map(githubMeta), used: tier, dropped };
       } catch (error) {
         if (error instanceof GithubUpstreamError && error.status === 401) {
           if (sessionId !== null) this.store.removeGrant(sessionId, tier);
-          else if (tenant.githubLogin !== undefined) this.store.removeGrantByLogin(tenant.githubLogin, tier);
+          else if (tenant.githubLogin !== undefined) this.store.removeGrantByGithubLogin(tenant.githubLogin, tier);
           delete tenant.grants[tier];
           dropped.push(tier);
           continue;
@@ -72,9 +106,23 @@ export class Upstream {
    */
   async gitee(tenant: Tenant, sessionId: string | null, isDemoTenant: boolean): Promise<GiteeSnapshot | null> {
     if (tenant.gitee === undefined) return null;
-    const key = sessionId ?? `login:${tenant.giteeLogin ?? tenant.login}`;
+    const key = tenant.giteeLogin ?? tenant.login;
     const running = this.giteeInFlight.get(key);
-    if (running !== undefined) return await running;
+    if (running !== undefined) {
+      const snapshot = await running;
+      // 等来的结果出自别人那份租户副本：自己这份可能还带着被轮换掉的 token，
+      // 或仍以为授权在。重读一次账本，`connected` 与下一次刷新才对得上。
+      if (sessionId !== null) {
+        const fresh = this.store.find(sessionId);
+        if (fresh !== undefined) {
+          // Object.assign 不会删掉目标上多出来的键：先清掉旧的 Gitee 授权，
+          // 否则上级 401 摘掉的授权又会被这份副本报成「已连接」。
+          delete tenant.gitee;
+          Object.assign(tenant, fresh);
+        }
+      }
+      return snapshot;
+    }
     const run = this.fetchGitee(tenant, sessionId, isDemoTenant).finally(() => {
       this.giteeInFlight.delete(key);
     });
@@ -85,14 +133,14 @@ export class Upstream {
   private async fetchGitee(tenant: Tenant, sessionId: string | null, isDemoTenant: boolean): Promise<GiteeSnapshot | null> {
     const stored = tenant.gitee;
     if (stored === undefined) return null;
-    const persist = (next: CredentialRecord): void => {
+    const persist = (next: GiteeCredential): void => {
       if (sessionId !== null) this.store.putGitee(sessionId, next);
-      else if (tenant.giteeLogin !== undefined) this.store.putGiteeByLogin(tenant.giteeLogin, next);
+      else if (tenant.giteeLogin !== undefined) this.store.putGiteeByGiteeLogin(tenant.giteeLogin, next);
       else throw new Error("Gitee 授权没有归属");
     };
     const remove = (): void => {
       if (sessionId !== null) this.store.removeGitee(sessionId);
-      else if (tenant.giteeLogin !== undefined) this.store.removeGiteeByLogin(tenant.giteeLogin);
+      else if (tenant.giteeLogin !== undefined) this.store.removeGiteeByGiteeLogin(tenant.giteeLogin);
       delete tenant.gitee;
     };
     const reauth = (): GiteeSnapshot => {
@@ -140,7 +188,7 @@ export class Upstream {
         createGiteeHttp(current.accessToken),
       );
       tenant.gitee = current;
-      return { status: "ok", items };
+      return { status: "ok", items: items.map(giteeMeta) };
     } catch (error) {
       if (error instanceof GiteeUpstreamError && error.status === 401) return reauth();
       return { status: "unavailable", detail: error instanceof Error ? error.message : "Gitee 不可达" };

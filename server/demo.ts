@@ -21,7 +21,6 @@ export interface DemoSnapshot {
 
 export class DemoRefresher {
   private readonly file: string;
-  private readonly upstream: Upstream;
   private current: DemoSnapshot | null;
   private inFlight: Promise<DemoSnapshot | null> | null = null;
 
@@ -30,9 +29,9 @@ export class DemoRefresher {
     private readonly demo: DemoConfig,
     private readonly store: EncryptedStore,
     private readonly now: () => number,
+    private readonly upstream: Upstream,
   ) {
     this.file = join(config.dataDir, "demo.json");
-    this.upstream = new Upstream(config, store, now);
     this.current = this.readFile();
   }
 
@@ -42,8 +41,12 @@ export class DemoRefresher {
   }
 
   start(): void {
-    void this.refresh();
-    setInterval(() => void this.refresh(), this.demo.refreshMs).unref();
+    const catchUp = (error: unknown): void => {
+      // 定时器上没人接的 rejection 在 Node 里会结束进程；失败只留一句结果，下一轮照常再试。
+      console.warn(`[demo] refresh failed: ${error instanceof Error ? error.message : "unknown"}`);
+    };
+    void this.refresh().catch(catchUp);
+    setInterval(() => void this.refresh().catch(catchUp), this.demo.refreshMs).unref();
   }
 
   /** 定时器与维护者重置共用这一条路径；已经在跑就复用同一个 Promise。 */
@@ -57,7 +60,7 @@ export class DemoRefresher {
   }
 
   private async run(): Promise<DemoSnapshot | null> {
-    const tenant = this.store.findByLogin(this.demo.login);
+    const tenant = this.store.findByGithubLogin(this.demo.login);
     if (tenant === undefined) {
       // 演示账号还没走过一次授权：服务端照常起，等那条账出现之后下一轮自动接上。
       console.warn("[demo] no tenant for DEMO_LOGIN yet; skipping refresh");

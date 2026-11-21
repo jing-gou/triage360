@@ -4,9 +4,11 @@ import { loadConfig } from "./config";
 import { DemoRefresher } from "./demo";
 import { warmReason } from "./reason";
 import { EncryptedStore } from "./store";
+import { Upstream } from "./upstream";
 
 const config = loadConfig(process.env);
 const store = new EncryptedStore(config.dataDir, () => Date.now());
+const upstream = new Upstream(config, store, () => Date.now());
 // 启动先扫一遍，之后每小时再扫：30 天清除不能只靠「有人来访问」触发——没流量的租户照样要到期消失。
 function sweep(): void {
   const removed = store.prune(Date.now());
@@ -20,9 +22,9 @@ void warmReason(config.deepseek);
 const demo =
   config.demo === null
     ? null
-    : new DemoRefresher(config, config.demo, store, () => Date.now());
+    : new DemoRefresher(config, config.demo, store, () => Date.now(), upstream);
 demo?.start();
-const handler = createHandler({ config, store, now: () => Date.now(), demo });
+const handler = createHandler({ config, store, now: () => Date.now(), demo, upstream });
 
 const server = createServer((req, res) => {
   handler(req, res).catch(() => {
