@@ -76,7 +76,7 @@ log "npm ci + build:server"
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" ci
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" run build:server
 
-# 4. 运行环境：七键、root 600；配了 DEEPSEEK_API_KEY 就多一行（#8）。内容没变就不碰文件。
+# 4. 运行环境：基础键 + 可选 Gitee / 演示租户 / DeepSeek 行；root 600，内容没变就不碰文件。
 ENV_FILE=$APP_DIR/.env
 tmp_env=$(mktemp)
 trap 'rm -f "$tmp_env"' EXIT
@@ -89,6 +89,19 @@ umask 077
   printf 'DATA_DIR=%s\n' "$DATA_DIR"
   printf 'GITHUB_CLIENT_ID=%s\n' "$GITHUB_CLIENT_ID"
   printf 'GITHUB_CLIENT_SECRET=%s\n' "$GITHUB_CLIENT_SECRET"
+  if [ -n "${GITEE_CLIENT_ID:-}" ] && [ -n "${GITEE_CLIENT_SECRET:-}" ]; then
+    printf 'GITEE_CLIENT_ID=%s\n' "$GITEE_CLIENT_ID"
+    printf 'GITEE_CLIENT_SECRET=%s\n' "$GITEE_CLIENT_SECRET"
+  fi
+  if [ -n "${DEMO_LOGIN:-}" ]; then
+    printf 'DEMO_LOGIN=%s\n' "$DEMO_LOGIN"
+    if [ -n "${DEMO_REFRESH_MINUTES:-}" ]; then
+      printf 'DEMO_REFRESH_MINUTES=%s\n' "$DEMO_REFRESH_MINUTES"
+    fi
+    if [ -n "${DEMO_RESET_TOKEN:-}" ]; then
+      printf 'DEMO_RESET_TOKEN=%s\n' "$DEMO_RESET_TOKEN"
+    fi
+  fi
   if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY"
   fi

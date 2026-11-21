@@ -20,25 +20,51 @@ export interface StoredGrant {
   scopes: string[] | null;
 }
 
+/** Gitee 一枚授权 = access + refresh + 过期时刻，刷新时必须整对落盘（seam 2 的原子替换）。 */
+export interface GiteeCredential {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: number | null;
+  lastRefreshAt: number | null;
+}
+
 export interface Tenant {
-  /** 会话标识本体只在这一层内存里出现；落盘的是它的哈希。 */
+  /**
+   * 会话标识本体只在这一层内存里出现；落盘的是它的哈希。
+   * 后台按登录名取演示租户时没有会话标识，这里是空串——那条路径不返回给浏览器。
+   */
   id: string;
+  /** 展示用的登录名：先连哪家就是哪家；各家的账号另记在 githubLogin / giteeLogin。 */
   login: string;
+  githubLogin?: string;
+  giteeLogin?: string;
   createdAt: number;
   lastSeenAt: number;
   grants: Partial<Record<Tier, StoredGrant>>;
+  gitee?: GiteeCredential;
+}
+
+interface StoredGitee {
+  cipher: string;
+  refreshCipher: string | null;
+  expiresAt: number | null;
+  lastRefreshAt: number | null;
 }
 
 interface StoredTenant {
   idHash: string;
   login: string;
+  githubLogin?: string;
+  giteeLogin?: string;
   createdAt: number;
   lastSeenAt: number;
   grants: Partial<Record<Tier, { cipher: string; scopes: string[] | null }>>;
+  gitee?: StoredGitee;
 }
 
 interface StoreFile {
-  version: 1;
+  /** v1 只有 GitHub 两档；v2 起多了 Gitee 的一对 token 与每家自己的登录名。读 v1、写 v2。 */
+  version: 1 | 2;
   tenants: StoredTenant[];
 }
 
@@ -86,11 +112,118 @@ export class EncryptedStore {
     const id = sessionId ?? this.createTenant(login, now);
     const tenant = this.tenantRecord(id);
     if (tenant === undefined) throw new Error("租户记录在写入前消失");
-    tenant.login = login;
+    tenant.login = tenant.giteeLogin ?? login;
+    tenant.githubLogin = login;
     tenant.lastSeenAt = now;
     tenant.grants[tier] = { cipher: encrypt(this.key, grant.token), scopes: grant.scopes === null ? null : [...grant.scopes] };
     this.persist();
     return id;
+  }
+
+  /**
+   * Gitee 授权与 GitHub 的两档并存：首次连接可以新建租户，第二家也可以挂在已有租户上。
+   * 两家的登录名分开记——同一个访客在两家的账号不必相同，不能拿 GitHub 名去对 Gitee 身份。
+   */
+  attachGitee(sessionId: string | null, credential: GiteeCredential, login: string, now: number): string {
+    if (sessionId !== null && this.find(sessionId) === undefined) {
+      throw new Error("授权会话已失效");
+    }
+    const id = sessionId ?? this.createTenant(login, now);
+    const tenant = this.tenantRecord(id);
+    if (tenant === undefined) throw new Error("租户记录在写入前消失");
+    tenant.login = tenant.githubLogin ?? login;
+    tenant.giteeLogin = login;
+    tenant.lastSeenAt = now;
+    tenant.gitee = this.encryptGitee(credential);
+    this.persist();
+    return id;
+  }
+
+  /**
+   * 刷新后的整对 Gitee token 落盘。先写文件、写成功才换内存里的记录：
+   * 落盘失败时旧的一对仍然可用，seam 2 的「坏一次轮换不丢租户」在这里成立。
+   */
+  putGitee(sessionId: string, credential: GiteeCredential): void {
+    const record = this.tenantRecord(sessionId);
+    if (record === undefined || record.gitee === undefined) throw new Error("Gitee 授权不存在");
+    this.commitGitee(record, this.encryptGitee(credential));
+  }
+
+  /** 演示租户的刷新没有浏览器会话，按登录名更新；判据和 putGitee 相同。 */
+  putGiteeByLogin(login: string, credential: GiteeCredential): void {
+    const record = this.recordByLogin(login);
+    if (record === undefined || record.gitee === undefined) throw new Error("Gitee 授权不存在");
+    this.commitGitee(record, this.encryptGitee(credential));
+  }
+
+  /** 上游判定 Gitee 授权失效：只删这一家；租户没有剩余授权时整条删除。 */
+  removeGitee(sessionId: string): void {
+    const record = this.tenantRecord(sessionId);
+    if (record === undefined) return;
+    delete record.gitee;
+    this.finishRemoval(record, sessionId);
+  }
+
+  removeGiteeByLogin(login: string): void {
+    const record = this.recordByLogin(login);
+    if (record === undefined) return;
+    delete record.gitee;
+    this.finishRemoval(record, null);
+  }
+
+  /** 演示租户的那一档 GitHub 被 401 时按登录名摘掉，不依赖浏览器会话。 */
+  removeGrantByLogin(login: string, tier: Tier): void {
+    const record = this.recordByLogin(login);
+    if (record === undefined) return;
+    delete record.grants[tier];
+    this.finishRemoval(record, null);
+  }
+
+  /**
+   * 后台取演示租户：没有会话标识，返回的 `id` 是空串（不交给浏览器）。
+   * 顺手续期 lastSeenAt——定时刷新就是它的活动证据，30 天清除不该把 demo 扫掉。
+   */
+  findByLogin(login: string): Tenant | undefined {
+    this.prune(this.now());
+    const record = this.recordByLogin(login);
+    if (record === undefined) return undefined;
+    record.lastSeenAt = this.now();
+    this.persist();
+    return this.materialize(record, "");
+  }
+
+  private recordByLogin(login: string): StoredTenant | undefined {
+    return this.tenants.find(
+      (one) => one.githubLogin === login || one.login === login || one.giteeLogin === login,
+    );
+  }
+
+  private encryptGitee(credential: GiteeCredential): StoredGitee {
+    return {
+      cipher: encrypt(this.key, credential.accessToken),
+      refreshCipher: credential.refreshToken === null ? null : encrypt(this.key, credential.refreshToken),
+      expiresAt: credential.expiresAt,
+      lastRefreshAt: credential.lastRefreshAt,
+    };
+  }
+
+  private commitGitee(record: StoredTenant, gitee: StoredGitee): void {
+    const next = this.tenants.map((one) => (one === record ? { ...one, gitee } : one));
+    this.persist(next);
+  }
+
+  /** 一条记录再没有任何授权就整条删除；否则正常落盘。 */
+  private finishRemoval(record: StoredTenant, sessionId: string | null): void {
+    if (Object.keys(record.grants).length === 0 && record.gitee === undefined) {
+      if (sessionId !== null) {
+        if (!this.delete(sessionId)) throw new Error("删除验证失败");
+        return;
+      }
+      const next = this.tenants.filter((one) => one !== record);
+      this.persist(next);
+      return;
+    }
+    this.persist();
   }
 
   /**
@@ -113,11 +246,7 @@ export class EncryptedStore {
     const record = this.tenantRecord(sessionId);
     if (record === undefined) return;
     delete record.grants[tier];
-    if (Object.keys(record.grants).length === 0) {
-      if (!this.delete(sessionId)) throw new Error("删除验证失败");
-    } else {
-      this.persist();
-    }
+    this.finishRemoval(record, sessionId);
   }
 
   /**
@@ -171,26 +300,45 @@ export class EncryptedStore {
         grants[tier] = { token: decrypt(this.key, stored.cipher), scopes: stored.scopes === null ? null : [...stored.scopes] };
       }
     }
-    return { id, login: record.login, createdAt: record.createdAt, lastSeenAt: record.lastSeenAt, grants };
+    return {
+      id,
+      login: record.login,
+      ...(record.githubLogin === undefined ? {} : { githubLogin: record.githubLogin }),
+      ...(record.giteeLogin === undefined ? {} : { giteeLogin: record.giteeLogin }),
+      createdAt: record.createdAt,
+      lastSeenAt: record.lastSeenAt,
+      grants,
+      ...(record.gitee === undefined
+        ? {}
+        : {
+            gitee: {
+              accessToken: decrypt(this.key, record.gitee.cipher),
+              refreshToken: record.gitee.refreshCipher === null ? null : decrypt(this.key, record.gitee.refreshCipher),
+              expiresAt: record.gitee.expiresAt,
+              lastRefreshAt: record.gitee.lastRefreshAt,
+            },
+          }),
+    };
   }
 
   private readFile(): StoredTenant[] {
     if (!existsSync(this.file)) return [];
     const raw = readFileSync(this.file, "utf8");
     const parsed = JSON.parse(raw) as StoreFile;
-    if (parsed.version !== 1 || !Array.isArray(parsed.tenants)) {
+    if ((parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.tenants)) {
       // 形状不对就起不来：带着半懂的账本继续跑，比停机的代价大。
-      throw new Error(`${this.file} 不是 version 1 的账本`);
+      throw new Error(`${this.file} 不是 version 1/2 的账本`);
     }
     return parsed.tenants;
   }
 
-  private persist(): void {
-    const body: StoreFile = { version: 1, tenants: this.tenants };
+  private persist(next: StoredTenant[] = this.tenants): void {
+    const body: StoreFile = { version: 2, tenants: next };
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(body), { mode: 0o600 });
     chmodSync(tmp, 0o600);
     renameSync(tmp, this.file);
+    this.tenants = next;
   }
 }
 

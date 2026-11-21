@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createHandler } from "./api";
 import { loadConfig } from "./config";
+import { DemoRefresher } from "./demo";
 import { warmReason } from "./reason";
 import { EncryptedStore } from "./store";
 
@@ -15,7 +16,13 @@ sweep();
 setInterval(sweep, 60 * 60_000).unref();
 // 与扫描同一步：趁没人用先把措辞通道的 DNS + TLS 握好，首个点击不必付冷启动的账。
 void warmReason(config.deepseek);
-const handler = createHandler({ config, store, now: () => Date.now() });
+// 演示快照与访问量无关：定时器自己跑，首次访客不等一次冷刷新（#15）。
+const demo =
+  config.demo === null
+    ? null
+    : new DemoRefresher(config, config.demo, store, () => Date.now());
+demo?.start();
+const handler = createHandler({ config, store, now: () => Date.now(), demo });
 
 const server = createServer((req, res) => {
   handler(req, res).catch(() => {

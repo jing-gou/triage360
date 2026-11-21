@@ -86,7 +86,7 @@ search()  getByIds()  normalize()  doneStates  deletedStates  pollIntervalMs  sc
 
 首次访客五步路径：①打开链接（默认载入演示代持账号）→ ②看"今天该做什么"自动生成清单 → ③手动拖拽排序（首次触发后弹出学习机制说明）→ ④点「为什么是这几条」看 2 秒理由 → ⑤连接自己的账号，可自选 public / private 权限。每个 issue 标题下由「AI 提炼」补一段任务总结，点击标题跳源站。
 
-对外自述文案写法：**自我介绍 2 句**（后端工程师 + 一次具体的漏看事故）；**"为什么做"只写一个事故 + 一条已核实的一手事实**（例如 Gitee 官方 API 无跨仓库"指派给我"端点，所以国内产品必须靠通知流拼装）；把三份调研笔记、每条 claim 的出处、**以及自己被推翻过的判断**单独成节——"我如何发现自己错了"是唯一无法事后编造的过程凭证。
+对外自述文案写法：**自我介绍 2 句**（后端工程师 + 一次具体的漏看事故）；**"为什么做"只写一个事故 + 一条已核实的一手事实**（例如 GitHub 的 `POST /login/oauth/access_token` 必须带 `client_secret`、PKCE 不能替代，所以纯前端做不成 OAuth）；把三份调研笔记、每条 claim 的出处、**以及自己被推翻过的判断**单独成节——"我如何发现自己错了"是唯一无法事后编造的过程凭证（已有一例可写：把 Gitee 官方 MCP 的工具表当成 REST 能力边界，实际 REST v5 有 `/user/issues?filter=assigned` 跨仓库端点，见 `research/platform-limits-and-landing-form.md` 的更正段）。
 
 ## 1. 决策台账
 

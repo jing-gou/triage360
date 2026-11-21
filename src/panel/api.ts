@@ -42,32 +42,61 @@ export interface TierGrant {
 
 export interface GithubAuth {
   grants: Partial<Record<Tier, TierGrant>>;
-  /** 这一轮取数实际用了哪一档。 */
-  used: Tier;
+  /** 这一轮取数实际用了哪一档；只有 Gitee 连着、GitHub 未授权时是 `null`。 */
+  used: Tier | null;
   expected: Record<Tier, string[]>;
   /** 这一轮取数里被 GitHub 判 401、已从服务端删掉的档。 */
   dropped: Tier[];
 }
 
-export interface GithubItems {
+/** Gitee 侧这一段：`none` 是没连过，`reauth` 是刚被上游摘掉——两者对访客的意思不同。 */
+export interface GiteeAuth {
+  status: "ok" | "reauth" | "unavailable" | "none";
+  items: unknown[];
+  /** `unavailable` 时给一句可读的原因；不含上游原文之外的凭据。 */
+  detail?: string;
+}
+
+export interface ItemsPayload {
+  /** GitHub 的原始条目；GitHub 未授权时为空数组。 */
   items: unknown[];
   login: string;
   auth: GithubAuth;
+  gitee: GiteeAuth;
+  /** 这一轮服务端手里各家的授权是否还在；面板只构建还连着的家。 */
+  connected: { github: boolean; gitee: boolean };
 }
 
-export async function fetchGithubItems(base: string, session: string): Promise<GithubItems> {
+export async function fetchItems(base: string, session: string): Promise<ItemsPayload> {
   const res = await fetch(`${base}/api/items`, { headers: { Authorization: `Bearer ${session}` } });
   if (res.status === 401) throw new UnauthenticatedError(`items 返回 401`);
   if (!res.ok) throw new Error(`items 返回 ${res.status}`);
-  return (await res.json()) as GithubItems;
+  return (await res.json()) as ItemsPayload;
 }
 
-/** 第二档（或重新）授权：服务端把这次授权挂回已有租户，返回 GitHub 授权页地址。 */
-export async function requestAuthUrl(base: string, session: string, tier: Tier): Promise<string> {
+/** 首次访客看的公开演示快照：服务端定时从演示账号取，访客不需要任何授权。 */
+export interface DemoPayload {
+  generatedAt: string;
+  items: unknown[];
+  gitee: unknown[];
+  connected: { github: boolean; gitee: boolean };
+}
+
+export async function fetchDemoItems(base: string): Promise<DemoPayload> {
+  const res = await fetch(`${base}/api/demo/items`);
+  if (!res.ok) throw new Error(`demo/items 返回 ${res.status}`);
+  return (await res.json()) as DemoPayload;
+}
+
+/** 授权页地址：GitHub 按档取，Gitee 没有档位。 */
+export type AuthTarget = { provider: "github"; tier: Tier } | { provider: "gitee" };
+
+/** 第二档（或重新）授权 / Gitee 首次授权：服务端把这次授权挂回已有租户，返回平台授权页地址。 */
+export async function requestAuthUrl(base: string, session: string, target: AuthTarget): Promise<string> {
   const res = await fetch(`${base}/api/auth-url`, {
     method: "POST",
     headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ tier }),
+    body: JSON.stringify(target.provider === "gitee" ? { provider: "gitee" } : { tier: target.tier }),
   });
   if (res.status === 401) throw new UnauthenticatedError(`auth-url 返回 401`);
   if (!res.ok) throw new Error(`auth-url 返回 ${res.status}`);

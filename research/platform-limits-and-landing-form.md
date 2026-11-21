@@ -15,7 +15,8 @@ related: [personal-cross-platform-issue-dashboard.md, super-productivity-impleme
    - 飞书：**企业自建应用只允许本租户内部使用**，面向公众提供服务必须开发商店应用并「联系平台工作人员提交审核」，之后还要按 `app_id + tenant_key` 换取 `tenant_access_token`（自建应用没有 `tenant_key`，`app_ticket` 每小时更新）。→ 个人 SaaS 路线 = ISV 入驻 + 平台审核，不是「注册个应用就能上线」。([飞书任务 v2 概述](https://open.feishu.cn/document/server-docs/task/v2/overview))
    - Atlassian：官方明确写「**收集用户 API token、或让客户自建 3LO 应用不符合安全要求与可接受使用政策**」，所以「让用户填 PAT/Jira token」这条路是被政策禁止的；必须做成可分发的 3LO 应用（默认 private，需手动开启共享/审核）。并且自 **2026-03-02** 起，Jira Cloud 对 Forge/Connect/2LO/3LO 强制执行 points 配额，默认 **Tier 1 – Global Pool：官方原话「Your app shares a single 65,000 point hourly quota across all tenants」——这是「你的 App 跨全部客户租户共享的一整个池子」，不是每租户一份**；官方写明**不能按需提额**，只有经 Atlassian 审核、用量高度集中的 App 才会被分到 Tier 2 – Per-Tenant Pool。([3LO 文档](https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/)、[速率限制](https://developer.atlassian.com/cloud/jira/platform/rate-limiting/))
    - Qoder Sites：**个人 Free 计划只支持静态站点部署，不支持数据库和存储服务**；Teams/Enterprise 计划的站点**不支持公开访问与组织外共享**。→ 要存每个用户的 token，必须至少用个人付费计划，并且面向非 Qoder 用户开放时要选 public。([Qoder Sites 文档](https://docs.qoder.com/qoder/sites))
-3. **Gitee 是四个平台里能力最弱的一环**：官方 MCP 服务器（`https://api.gitee.com/mcp`，个人令牌鉴权）暴露的 Issue 工具只有**仓库级** `list_repo_issues` / `create_issue` / `update_issue` / `get_repo_issue_detail` 加 `list_user_notifications`，**没有「跨仓库、分配给我的 Issue」端点**；且官方文档**没有公开量化调用频率/配额**，只有使用条款的「请求频率过快将导致请求终止」。→ 「个人总览」在 Gitee 侧必须自己遍历仓库或消费通知流。（见 [Gitee 官方 mcp-gitee README](https://gitee.com/oschina/mcp-gitee)）
+3. **Gitee 是四个平台里能力最弱的一环**：官方 MCP 服务器（`https://api.gitee.com/mcp`，个人令牌鉴权）暴露的 Issue 工具只有**仓库级** `list_repo_issues` / `create_issue` / `update_issue` / `get_repo_issue_detail` 加 `list_user_notifications`，**没有「跨仓库、分配给我的 Issue」工具**；且官方文档**没有公开量化调用频率/配额**，只有使用条款的「请求频率过快将导致请求终止」。（见 [Gitee 官方 mcp-gitee README](https://gitee.com/oschina/mcp-gitee)）
+   - **更正（2026-11-22，一手：Gitee OpenAPI v5 Swagger）**：上面这条只对**官方 MCP 工具表**成立。REST v5 有跨仓库端点 `GET /api/v5/user/issues?filter=assigned&state=open|progressing&sort=updated&per_page=100`（Swagger 的 `user_issues` 定义；未认证返回 401）⇒ provider 不需要遍历仓库或消费通知流。该端点已按响应形状写入 `src/providers/gitee.ts` 并用假数据测试，**尚未用真 token 跑过**。
    - **补充（本轮新增核实）**：产品层面 assign **确实会产生站内信**——官方帮助中心的事件表写明「有新的任务指派给我 → 站内信 / 邮件」「有新的 PR 指派给我 → 站内信 / 邮件」；但同一页面写明渠道与「是否通知到用户」由用户在**设置 → 基本设置 → 通知设置**自行开关，所以通知流**不能作为唯一数据源**。API 层面 `list_user_notifications` 是否携带可判定「指派」的字段仍未核实，已给出 1 分钟实测配方。（[消息通知设置](https://help.gitee.com/account/notification-settings)）
 4. 落地形态上最容易被忽略的一点：Qoder Sites 的站点地址是「**可编辑前缀 + 固定后缀**」，官方文档**未提供自定义域名入口**；同时文档与接口契约里**没有任何定时/计划任务能力**，所以「每 10 分钟自动拉」不能由站点自己触发，只能是「打开即拉 + 手动 refresh」或把调度放到站点外。GitHub OAuth App、GitLab 应用、飞书安全域名、Atlassian 回调都要把这个地址写死，**改名会直接让所有已注册回调失效**；站点如果是 `private/selected`，访客还必须先用 Qoder 账号登录。
 5. **按「每 10 分钟一轮」算预算，真正的天花板不是 GitHub，而是飞书的租户月度池和 Atlassian 的 Global Pool**：每用户每月约 4,320 轮，飞书 1-3 次/轮（会计入「单租户所有自建应用合计」的月池）≈ 4,320-12,960 次/月/用户，对基础免费版的 100 万限时值意味着约 77-231 个用户/租户，而该 100 万本身是**限时政策**（历史值 1 万/月）；Jira 侧 65,000 points/小时是**你的 App 跨全部客户共享的一整个池**，按每轮 10-50 points 估约 217-1,083 个并发轮询用户即打满。GitHub 5,000/小时（按用户）在这个量级下完全够用。详见「轮询成本模型」。
@@ -61,7 +62,7 @@ related: [personal-cross-platform-issue-dashboard.md, super-productivity-impleme
    - GitHub App：安装制、用户权限与组织权限分离、令牌短期有效、内置 webhook、可细粒度限定仓库范围。**GitHub 自己推荐优先做 GitHub App。**
    - 对多租户聚合，GitHub App 明显更优（webhook 免轮询、安装到组织、可按仓库降权）；OAuth App 更适合纯个人自用。
 2. **速率与配额**：认证用户 5,000/小时；GitHub Enterprise Cloud 客户端 15,000/小时**但共享同一用户身份预算**；**search 端点 30/分钟**，code search 9/分钟，rate-limiting 维度为「per user 或 per OAuth App」。
-3. **搜索侧限制**（因为 Gitee 没有 assignee 端点，GitHub 你可能想用 search）：`assignee:@me` 可用；单次查询**最多返回 1,000 条**；查询串**≤256 字符、≤5 个 AND/OR/NOT**；search 最多扫描 4,000 个仓库；`sort` 参数不支持 `created`。
+3. **搜索侧限制**（GitHub 用 `search/issues` 一条查询覆盖「指派给我」，仍比逐仓库遍历省调用）：`assignee:@me` 可用；单次查询**最多返回 1,000 条**；查询串**≤256 字符、≤5 个 AND/OR/NOT**；search 最多扫描 4,000 个仓库；`sort` 参数不支持 `created`。
 4. **组织侧授权阻塞**：托管在组织下的仓库，「**By default, all third-party applications have access restricted**」，需组织管理员逐应用批准 → 用户所在公司组织若未批准你的应用，即使他个人授权也读不到数据（OAuth App 与 GitHub App 都受此约束）。
 5. **次要速率限制**（聚合服务最容易被忽略的坑）：并发请求 **100**；单端点 **900 "points"/分钟**（普通端点 1 分、重查询端点 5 分）；**60 秒内 CPU ≤90 秒**；内容创建类 **80/分钟、500/小时**；**创建 OAuth token 与 installation token 合计 ≤2,000/小时**。官方还要求：按用户分配配额、遵守 `Retry-After`、不要对多用户共享凭据、不要压测真实租户。
 6. GraphQL：5,000 points/小时（企业 10,000），适合一次请求拉多仓库 issues，但同样受用户预算约束。
@@ -175,7 +176,7 @@ related: [personal-cross-platform-issue-dashboard.md, super-productivity-impleme
 | 1 | 飞书自建应用不能对外服务，商店应用需 ISV 入驻 + 平台审核 + `app_ticket`/`tenant_key` | 任何「多租户 SaaS + 飞书任务」 | MVP 先只做「自建应用 = 自己公司租户内用」；对外版本独立立项走商店审核 |
 | 2 | Atlassian 禁止收集用户 token / 禁止让用户自建 3LO；且 2026-03-02 起默认 Global Pool 65,000 points/h 不可自助提额 | Jira provider 的多用户规模 | 立刻申请可分发 3LO（enable sharing），只做增量拉取与批量写；把 tier 审批当成上线前置条件 |
 | 3 | Qoder Sites 个人 Free 不支持数据库/存储；Teams/Enterprise 不支持公开访问；无自定义域名入口；免费期有用量上限 | 整体落地形态 | 用付费个人计划；把地址前缀视为「不可变更的生产配置」登记到四家应用；长期迁移到可自定义域名的后端 |
-| 4 | Gitee 无「跨仓库分配给我」端点 + 无公开量化配额 | Gitee provider | 用 `list_user_repos` → 逐仓库拉取的降级方案；自己实现全局限速器；工单确认配额 |
+| 4 | Gitee 的 MCP 工具表没有「跨仓库分配给我」；REST v5 有 `user/issues`（Swagger 一手，未用真 token 实测）+ 无公开量化配额 | Gitee provider | 用 REST `/user/issues?filter=assigned`（见 TL;DR 更正），不遍历仓库；仍自己实现全局限速器；工单确认配额 |
 | 5 | GitHub 组织默认限制第三方应用访问 | GitHub provider（公司仓库） | 引导用户自查组织已批准的 OAuth App/GitHub App；失败时给出可执行的提示 |
 | 6 | 所有平台的回调地址必须与登记完全一致（Atlassian 尤其严格，含端口与路径） | OAuth 全流程 | 站点部署前先固定域名；写一份 redirect 矩阵文档；本地调试用独立应用而非生产应用 |
 
