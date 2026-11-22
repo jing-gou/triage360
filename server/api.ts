@@ -7,6 +7,12 @@ import type { DemoRefresher } from "./demo";
 import { authorizeUrl as giteeAuthorizeUrl, exchangeCode as giteeExchangeCode, fetchIdentity as fetchGiteeIdentity } from "./gitee-oauth";
 import { authorizeUrl, exchangeCode, fetchIdentity, isTier, missingScopes, SCOPES } from "./github-oauth";
 import {
+  authorizeUrl as jiraAuthorizeUrl,
+  exchangeCode as jiraExchangeCode,
+  fetchAccessibleSite,
+  fetchIdentity as fetchJiraIdentity,
+} from "./jira-oauth";
+import {
   composeReasonWording,
   parseReasonCard,
   ReasonQualityError,
@@ -14,7 +20,7 @@ import {
   ReasonUnavailableError,
 } from "./reason";
 import type { EncryptedStore } from "./store";
-import type { GiteeSnapshot, Upstream } from "./upstream";
+import type { GiteeSnapshot, JiraSnapshot, Upstream } from "./upstream";
 
 /**
  * OAuth 回调 handler 与 HTTP 细节按 spec 的 Testing Decisions 不写自动化测试
@@ -32,7 +38,7 @@ const EXPECTED_SCOPES: Record<Tier, string[]> = { public: [SCOPES.public], priva
 
 interface PendingAuth {
   expiresAt: number;
-  provider: "github" | "gitee";
+  provider: "github" | "gitee" | "jira";
   /** GitHub 的第二档授权要挂回已有租户；首次连接为 null。 */
   sessionId: string | null;
   tier?: Tier;
@@ -66,6 +72,14 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
     return giteeAuthorizeUrl(config, state);
   }
 
+  /** #19 的内部自证入口：面板不链接它，只用于维护者完成一次真实 3LO 闭环。 */
+  function startJiraAuth(sessionId: string | null): string {
+    purgeExpired(pendingStates, now());
+    const state = randomBytes(24).toString("base64url");
+    pendingStates.set(state, { expiresAt: now() + STATE_TTL_MS, provider: "jira", sessionId });
+    return jiraAuthorizeUrl(config, state);
+  }
+
   return async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", config.frontendUrl);
     const url = new URL(req.url ?? "/", config.appBaseUrl);
@@ -79,7 +93,12 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
       }
 
       if (req.method === "GET" && url.pathname === "/health") {
-        return json(res, 200, { ok: true, gitee: config.gitee !== null, demo: config.demo !== null });
+        return json(res, 200, {
+          ok: true,
+          gitee: config.gitee !== null,
+          jira: config.atlassian !== null,
+          demo: config.demo !== null,
+        });
       }
 
       if (req.method === "GET" && url.pathname === "/auth/github") {
@@ -92,13 +111,23 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
         return redirect(res, startGiteeAuth(null));
       }
 
+      if (req.method === "GET" && url.pathname === "/auth/jira") {
+        if (config.atlassian === null) {
+          return text(res, 503, "Atlassian 未配置：服务端缺少 ATLASSIAN_CLIENT_ID / ATLASSIAN_CLIENT_SECRET。");
+        }
+        return redirect(res, startJiraAuth(null));
+      }
+
       if (req.method === "POST" && url.pathname === "/api/auth-url") {
         // 第二档授权从面板发起：会话标识走 Authorization 头，不放 query（ADR-0010 的边界）。
         const id = bearerOf(req);
         if (id === null || store.find(id) === undefined) return json(res, 401, { error: "unauthenticated" });
         const body = await readJsonBody(req);
-        const provider = body !== null && body.provider === "gitee" ? "gitee" : "github";
-        if (provider === "gitee") {
+        if (body !== null && body.provider === "jira") {
+          if (config.atlassian === null) return json(res, 503, { error: "jira_unconfigured" });
+          return json(res, 200, { url: startJiraAuth(id) });
+        }
+        if (body !== null && body.provider === "gitee") {
           if (config.gitee === null) return json(res, 503, { error: "gitee_unconfigured" });
           return json(res, 200, { url: startGiteeAuth(id) });
         }
@@ -113,6 +142,10 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
 
       if (req.method === "GET" && url.pathname === "/cb/gitee") {
         return await giteeCallback(res, url);
+      }
+
+      if (req.method === "GET" && url.pathname === "/cb/jira") {
+        return await jiraCallback(res, url);
       }
 
       if (req.method === "GET" && url.pathname === "/api/items") {
@@ -227,6 +260,49 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
     }
   }
 
+  /**
+   * Jira 3LO 回调：换 token → 找带 `read:jira-work` 的站点 → 认账号 → 挂到会话。
+   * 没有面板入口，这个回调只服务于 #19 的内部自证；日志只记结果，不记 code / token / 身份。
+   */
+  async function jiraCallback(res: ServerResponse, url: URL): Promise<void> {
+    const state = url.searchParams.get("state") ?? "";
+    const code = url.searchParams.get("code") ?? "";
+    const pending = pendingStates.get(state);
+    pendingStates.delete(state);
+    if (pending === undefined || pending.provider !== "jira" || pending.expiresAt < now() || code === "") {
+      console.warn("[cb/jira] rejected: state expired, unknown or code missing");
+      return text(res, 400, "授权没有走完，回到面板重新连接。");
+    }
+    if (config.atlassian === null) return text(res, 503, "Atlassian 未配置。");
+    try {
+      const tokens = await jiraExchangeCode(config, code, now());
+      const site = await fetchAccessibleSite(tokens.accessToken);
+      const identity = await fetchJiraIdentity(tokens.accessToken, site.cloudId);
+      const existing = pending.sessionId === null ? undefined : store.find(pending.sessionId);
+      if (existing?.jira !== undefined && existing.jira.accountId !== identity.accountId) {
+        console.warn("[cb/jira] rejected: account mismatch");
+        return text(res, 400, "这次授权的 Atlassian 账号与已连接的账号不同，换回原账号再试。");
+      }
+      const id = store.attachJira(
+        pending.sessionId,
+        {
+          ...credentialFromTokens(tokens, now()),
+          cloudId: site.cloudId,
+          siteUrl: site.siteUrl,
+          accountId: identity.accountId,
+          displayName: identity.displayName,
+        },
+        identity.displayName,
+        now(),
+      );
+      console.log("[cb/jira] session created");
+      return redirect(res, `${config.frontendUrl}/#session=${encodeURIComponent(id)}`);
+    } catch (error) {
+      console.warn(`[cb/jira] failed: ${error instanceof Error ? error.message : "unknown"}`);
+      return text(res, 400, error instanceof Error ? error.message : "Jira 授权没有走完。");
+    }
+  }
+
   async function items(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const id = bearerOf(req);
     const tenant = id === null ? undefined : store.find(id);
@@ -242,12 +318,15 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
     const github = await upstream.github(tenant, id, previous);
     // 演示账号即使被维护者用会话打开，刷新也归定时器管：请求路径不续期。
     const gitee = await upstream.gitee(tenant, id, previous);
+    // Jira 只用于内部自证，原始条目随响应返回给会话本人，面板不构建它。
+    const jira = await upstream.jira(tenant, id, previous);
 
     // 租户是 materialize 出来的副本：被摘掉的授权要在副本上同步删掉，否则响应还会报「已连接」。
     const githubConnected = tenant.grants.public !== undefined || tenant.grants.private !== undefined;
     const giteeConnected = tenant.gitee !== undefined;
-    if (!githubConnected && !giteeConnected) {
-      // 两家都不可用：整条租户删掉，让面板回到「重新连接」而不是留一条死记录。
+    const jiraConnected = tenant.jira !== undefined;
+    if (!githubConnected && !giteeConnected && !jiraConnected) {
+      // 三家都不可用：整条租户删掉，让面板回到「重新连接」而不是留一条死记录。
       if (!store.delete(id)) console.error("[items] delete verification failed");
       return json(res, 401, { error: "reconnect" });
     }
@@ -269,8 +348,9 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
         expected: EXPECTED_SCOPES,
         dropped: github.dropped,
       },
-      gitee: giteeSnapshot(gitee),
-      connected: { github: githubConnected, gitee: giteeConnected },
+      gitee: providerSnapshot(gitee),
+      jira: providerSnapshot(jira),
+      connected: { github: githubConnected, gitee: giteeConnected, jira: jiraConnected },
     });
   }
 
@@ -308,8 +388,8 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
   }
 }
 
-/** Gitee 的取数结果换算成面板可读的一段；`none` 与 `reauth` 分开：没连过和刚被摘掉不是一件事。 */
-function giteeSnapshot(snapshot: GiteeSnapshot | null): {
+/** Gitee / Jira 的取数结果换算成面板可读的一段；`none` 与 `reauth` 分开：没连过和刚被摘掉不是一件事。 */
+function providerSnapshot(snapshot: GiteeSnapshot | JiraSnapshot | null): {
   status: "ok" | "reauth" | "unavailable" | "none";
   items: RawItem[];
   previous: RawItem[];

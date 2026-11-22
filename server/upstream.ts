@@ -2,10 +2,12 @@ import { decideCredentialAction, recordRefreshAttempt, rotateCredential, type Cr
 import { providerIdOf, type Http, type Provider, type RawItem, type Tier } from "../src/core/provider";
 import { createGiteeProvider, GiteeUpstreamError } from "../src/providers/gitee";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
+import { createJiraProvider, JiraUpstreamError } from "../src/providers/jira";
 import type { ServerConfig } from "./config";
 import { createGiteeHttp, refreshAccessToken } from "./gitee-oauth";
 import { createGithubHttp } from "./github-oauth";
-import type { EncryptedStore, GiteeCredential, Tenant } from "./store";
+import { createJiraHttp, refreshAccessToken as refreshJiraAccessToken } from "./jira-oauth";
+import type { EncryptedStore, GiteeCredential, JiraCredential, Tenant } from "./store";
 
 /**
  * 上游取数的共用路径：浏览器会话与演示租户的定时刷新都走这里。
@@ -32,6 +34,12 @@ export interface GithubSnapshot {
 }
 
 export type GiteeSnapshot =
+  | { status: "ok"; items: RawItem[]; previous: RawItem[] }
+  | { status: "reauth"; previous: RawItem[] }
+  | { status: "unavailable"; detail: string; previous: RawItem[] };
+
+/** Jira 没有访客入口，也不进演示快照；`null` 表示这个租户没连过。 */
+export type JiraSnapshot =
   | { status: "ok"; items: RawItem[]; previous: RawItem[] }
   | { status: "reauth"; previous: RawItem[] }
   | { status: "unavailable"; detail: string; previous: RawItem[] };
@@ -66,6 +74,25 @@ function giteeMeta(item: RawItem): RawItem {
   };
 }
 
+function jiraMeta(item: RawItem): RawItem {
+  const fields = item.fields as {
+    summary?: unknown;
+    status?: { statusCategory?: { key?: unknown } } | null;
+    updated?: unknown;
+    duedate?: unknown;
+  };
+  return {
+    id: item.id,
+    key: item.key,
+    fields: {
+      summary: fields.summary,
+      status: fields.status == null ? null : { statusCategory: { key: fields.status.statusCategory?.key } },
+      updated: fields.updated,
+      duedate: fields.duedate ?? null,
+    },
+  };
+}
+
 /**
  * 只补「上一轮见过、本轮活跃视图没有」的 id：确认到已关闭的记录能收敛掉，
  * 404 或确认请求失败都从返回数组里省略，交给 ADR-0003 的「未返回视为跳过」保留原卡。
@@ -95,6 +122,13 @@ export class Upstream {
    * 与维护者自己的会话可能是同一份授权，只按会话锁不住这条竞态。
    */
   private readonly giteeInFlight = new Map<string, Promise<GiteeSnapshot | null>>();
+
+  /**
+   * Atlassian 的 refresh token 一换就作废旧的：同一份授权若被两个请求同时看见过期，
+   * 后一次会拿已退役的 refresh token 去换，并可能把新 token 覆盖回旧值。
+   * 键用 cloudId + accountId，与浏览器会话解耦。
+   */
+  private readonly jiraInFlight = new Map<string, Promise<JiraSnapshot | null>>();
 
   constructor(
     private readonly config: ServerConfig,
@@ -270,6 +304,110 @@ export class Upstream {
         status: "unavailable",
         previous: [],
         detail: error instanceof Error ? error.message : "Gitee 不可达",
+      };
+    }
+  }
+
+  /**
+   * Jira 只在内部自证路径上取数：入口永远是某个浏览器会话，没有演示租户的定时刷新，
+   * 因此轮换后的凭据必须按会话写回。刷新失败但 access token 未过期时继续用旧的；
+   * 已经过期才摘掉这一家并显式回报 reauth。
+   */
+  async jira(tenant: Tenant, sessionId: string, previousIds: readonly string[] = []): Promise<JiraSnapshot | null> {
+    const stored = tenant.jira;
+    if (stored === undefined) return null;
+    const key = `${stored.cloudId}:${stored.accountId}`;
+    const running = this.jiraInFlight.get(key);
+    if (running !== undefined) {
+      const snapshot = await running;
+      // 等来的结果出自别人那份租户副本：重读账本，避免自己这份继续拿着已轮换的旧 token。
+      const fresh = this.store.find(sessionId);
+      if (fresh !== undefined) {
+        delete tenant.jira;
+        Object.assign(tenant, fresh);
+      }
+      return snapshot;
+    }
+    const run = this.fetchJira(tenant, sessionId, previousIds).finally(() => {
+      this.jiraInFlight.delete(key);
+    });
+    this.jiraInFlight.set(key, run);
+    return await run;
+  }
+
+  private async fetchJira(
+    tenant: Tenant,
+    sessionId: string,
+    previousIds: readonly string[],
+  ): Promise<JiraSnapshot | null> {
+    const stored = tenant.jira;
+    if (stored === undefined) return null;
+    const persist = (next: CredentialRecord): void => {
+      const credential: JiraCredential = { ...stored, ...next };
+      this.store.putJira(sessionId, credential);
+    };
+    const remove = (): void => {
+      this.store.removeJira(sessionId);
+      delete tenant.jira;
+    };
+    const reauth = (): JiraSnapshot => {
+      remove();
+      return { status: "reauth", previous: [] };
+    };
+
+    let current: CredentialRecord = { ...stored };
+    const action = decideCredentialAction({
+      now: this.now(),
+      expiresAt: current.expiresAt,
+      lastRefreshAt: current.lastRefreshAt,
+      isDemoTenant: false,
+    });
+    if (action === "expire-to-reauth") return reauth();
+
+    if (action !== "serve") {
+      if (current.refreshToken === null) {
+        if (current.expiresAt !== null && this.now() >= current.expiresAt) return reauth();
+      } else {
+        try {
+          const refreshed = await refreshJiraAccessToken(this.config, current.refreshToken, this.now());
+          const outcome = rotateCredential(current, refreshed, persist, this.now());
+          if (outcome.kind === "committed") {
+            current = outcome.record;
+            // 只记事件与是否真的拿到新的一对，不记 token 本身；#19 的轮换自证读这一行。
+            console.log(`[jira] refresh committed (rotated=${refreshed.refreshToken !== null})`);
+          } else {
+            current = this.recordAttempt(current, persist);
+          }
+        } catch {
+          current = this.recordAttempt(current, persist);
+        }
+        const after = decideCredentialAction({
+          now: this.now(),
+          expiresAt: current.expiresAt,
+          lastRefreshAt: current.lastRefreshAt,
+          isDemoTenant: false,
+        });
+        if (after === "expire-to-reauth") return reauth();
+      }
+    }
+
+    try {
+      const provider = createJiraProvider({ cloudId: stored.cloudId, siteUrl: stored.siteUrl });
+      const http = createJiraHttp(current.accessToken);
+      const items = await provider.search({ assignee: stored.displayName, includeDone: false }, http);
+      tenant.jira = { ...stored, ...current };
+      console.log(`[jira] fetched ${items.length} items`);
+      return {
+        status: "ok",
+        items: items.map(jiraMeta),
+        previous: await confirmPrevious(provider, items, previousIds, http, jiraMeta),
+      };
+    } catch (error) {
+      if (error instanceof JiraUpstreamError && error.status === 401) return reauth();
+      return {
+        status: "unavailable",
+        previous: [],
+        detail: error instanceof Error ? error.message : "Jira 不可达",
       };
     }
   }
