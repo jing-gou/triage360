@@ -41,8 +41,7 @@ describe("seam 1 · 摘要通道要的标签（#20）", () => {
       scope,
     });
 
-    expect(list.entries[0]?.labels).toEqual(["bug", "ui"]);
-    expect(Object.keys(list.entries[0]?.task ?? {})).not.toContain("labels");
+    expect(list.entries[0]?.task.labels).toEqual(["bug", "ui"]);
   });
 
   it("合并卡的标签是各来源的并集，重复的只留一次", async () => {
@@ -58,7 +57,7 @@ describe("seam 1 · 摘要通道要的标签（#20）", () => {
     });
 
     expect(list.entries).toHaveLength(1);
-    expect(list.entries[0]?.labels).toEqual(["bug", "backend"]);
+    expect(list.entries[0]?.task.labels).toEqual(["bug", "backend"]);
   });
 });
 
@@ -86,6 +85,6 @@ describe("seam 1 · 各家的标签形状在 provider 里消化", () => {
       scope,
     });
 
-    expect(list.entries[0]?.labels).toEqual(["backend", "bug"]);
+    expect(list.entries[0]?.task.labels).toEqual(["backend", "bug"]);
   });
 });

@@ -163,7 +163,7 @@ export class DemoRefresher {
         try {
           const { text } = await composeSummary(this.config.deepseek, {
             title: typeof item.raw.title === "string" ? item.raw.title : "",
-            labels: [...item.provider.labels(item.raw)],
+            labels: [...item.provider.normalize(item.raw).labels],
           });
           snapshot.summaries[item.key] = text;
         } catch {

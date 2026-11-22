@@ -17,6 +17,7 @@ const ACTIVE_STATES = ["open", "progressing"] as const;
 const DONE_STATES = ["closed", "rejected"] as const;
 
 interface GiteeIssue {
+  labels?: unknown;
   number: string | number;
   title: string;
   html_url: string;
@@ -99,6 +100,7 @@ export function createGiteeProvider(): Provider {
         title: issue.title,
         url: issue.html_url,
         state: issue.state,
+        labels: labelNames(issue.labels),
         updatedAt: new Date(issue.updated_at).toISOString(),
         ...(typeof issue.deadline === "string" && issue.deadline !== ""
           ? dueFrom(issue.deadline)
@@ -106,9 +108,6 @@ export function createGiteeProvider(): Provider {
       };
     },
 
-    labels(raw) {
-      return labelNames((raw as { labels?: unknown }).labels);
-    },
 
     doneStates() {
       return ["closed", "rejected"];

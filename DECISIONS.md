@@ -45,7 +45,7 @@ related:
 Provider 抽象做成**内部统一契约**（不开放第三方插件）：
 
 ```
-search()  getByIds()  normalize()  labels()  doneStates  deletedStates  pollIntervalMs  scopeDescriptor
+search()  getByIds()  normalize()  doneStates  deletedStates  pollIntervalMs  scopeDescriptor
 ```
 
 `scopeDescriptor` 是必需字段——Q36 证明"公私粒度"在各平台根本不对称（GitHub 有、Gitee/Jira 没有），硬编码会让这个差异散落到每个 `if` 里。`normalize()` 必须在阶段 1 定稿，否则阶段 3 的跨平台重复项合并会建在各自原始字段上。
@@ -135,7 +135,7 @@ search()  getByIds()  normalize()  labels()  doneStates  deletedStates  pollInte
 | Q41 | 演示数据集 | **C：精选 12 + 展开 83 双层** | |
 | Q42 | 异常可见性（Q40-B 之后） | **C：就地卡片水印**，无横幅 | |
 | Q43 | 两周排期与降级时点 | 全表采纳 | 见 §2 |
-| Q44 | provider 抽象 | **B：内部统一契约七法**（#20 追加 `labels` 成八法） | 兑现"飞书留位"那句话 |
+| Q44 | provider 抽象 | **B：内部统一契约七法** | 兑现"飞书留位"那句话 |
 | Q45 | token 静态加密 | **B：AES-256-GCM，密钥同机**，边界写进自陈屏 | |
 | Q46 | LLM 运行位置与延迟 | 自有服务器 + 自有 key；理由同步 2s / 摘要流式异步 | Cloud Agents 仅 30 分钟可选验证 |
 | Q47 | 对外演示脚本 | **显式推迟** | 唯一被有意搁置的分支 |

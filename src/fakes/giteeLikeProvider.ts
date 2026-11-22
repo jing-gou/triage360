@@ -13,6 +13,7 @@ const PROVIDER_ID = "gitee";
 const REPOS = ["jing-gou/triage360", "jing-gou/legacy-importer"];
 
 interface GiteeIssue {
+  labels?: unknown;
   number: number;
   title: string;
   html_url: string;
@@ -80,6 +81,7 @@ export function createGiteeLikeProvider(): Provider {
         title: issue.title,
         url: issue.html_url,
         state: issue.state,
+        labels: labelNames(issue.labels),
         updatedAt: new Date(issue.updated_at).toISOString(),
         // Gitee 的截止日期字段未实测（T15 真连时按实测补），但键必须写出来：定稿的键集合不按平台分叉。
         dueAt: undefined,
@@ -87,9 +89,6 @@ export function createGiteeLikeProvider(): Provider {
       };
     },
 
-    labels(raw) {
-      return labelNames((raw as { labels?: unknown }).labels);
-    },
 
     doneStates() {
       return ["finished"];

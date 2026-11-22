@@ -1,5 +1,5 @@
 import type { Http, Provider, Scope, Task } from "./provider";
-import { hitsByGroup, type PlacementRecord } from "./learning";
+import { hitsByGroup, hitsByLabel, type PlacementRecord } from "./learning";
 import { sourceGroupOf } from "./source-group";
 
 export type { PlacementRecord };
@@ -77,28 +77,23 @@ export interface FullEntry {
 
 /**
  * 清单条目 = 任务 + 它为什么排在这里。
- * 理由不塞进任务本身：定稿的八键是跨平台最小形状（T03），打分是构建器这一侧的事。
+ * 理由不塞进任务本身：定稿的九键是跨平台最小形状（T03 / ADR-0017），打分是构建器这一侧的事。
  */
 export interface ListEntry {
   task: Task;
   reason: RuleId;
   /**
    * 这张卡是**被学习加权抬上来**的那一条时才有它：命中的是哪个来源分组、近期置顶过几次。
-   * #8 的「为什么是这几条」与卡片上那句本地文案读它，八键不动——和 `reason` 同一个理由。
+   * #8 的「为什么是这几条」与卡片上那句本地文案读它，九键不因它动——和 `reason` 同一个理由。
    * 手动区里的卡不带它：那张卡站在那儿是因为访客自己拖过它，说成「因为连续置顶」就是假话。
    */
   learned?: LearnedBoost;
   /**
    * 这张卡合成自哪几条原始记录，只在真的合并过时存在，第一条就是 `task`。
-   * 和 `reason` 同一个理由：来源集合是构建器这一侧的结论，八键不因合并而长。
+   * 和 `reason` 同一个理由：来源集合是构建器这一侧的结论，九键不因合并而长。
    * #8 的「为什么是这几条」与界面上的逐个跳转都读它。
    */
   mergedFrom?: readonly Task[];
-  /**
-   * 这张卡各来源的标签名并集（#20 的摘要通道要按「标题与标签」上行）。
-   * 与 `reason` 同一个理由挂在条目上：标签不参与归一、打分与合并，任务八键不因它变长。
-   */
-  labels?: readonly string[];
   /**
    * 这张卡来自上一轮快照时，那个快照的 `generatedAt`。只有本轮取数失败的家才有，
    * 正常取到的卡不带这个键——界面据此决定要不要打「来自 HH:MM 快照」。
@@ -106,9 +101,13 @@ export interface ListEntry {
   snapshotAt?: string;
 }
 
-/** 学习加权命中的那个来源分组，以及它在窗口内被置顶的次数（`#10`）。 */
+/**
+ * 学习加权命中的信号（`#10` / `#36`）：来源分组与标签各是一维，命中哪维就带哪维；
+ * `hits` 是排序用的强度——两维都命中时取较大者，理由句照样把两维都说出来。
+ */
 export interface LearnedBoost {
-  group: string;
+  group?: { name: string; hits: number };
+  label?: { name: string; hits: number };
   hits: number;
 }
 
@@ -156,19 +155,18 @@ export async function buildTodayList({
   // 打分（T04）先按规则分堆，堆内按最近有动静排。
   // normalize 已把各家时间统一成 UTC，字符串比较才成立；时钟只取一次，同一轮里不许变。
   const instant = now().toISOString();
-  const boost = hitsByGroup(placements, instant);
+  const groupBoost = hitsByGroup(placements, instant);
+  const labelBoost = hitsByLabel(placements, instant);
   const entries: ListEntry[] = batches
     .flatMap((batch) =>
       batch.present
         .filter(({ done }) => !done)
         .map(({ task }) => {
           const group = sourceGroupOf(task);
-          const hits = boost.get(group);
-          const labels = batch.present.find((one) => one.task.id === task.id)?.labels ?? [];
+          const learned = buildBoost(group, groupBoost.get(group), bestLabelHit(task.labels, labelBoost));
           return {
             ...baseEntry(task, batch, instant, zoneOffsetMinutes),
-            ...(labels.length === 0 ? {} : { labels }),
-            ...(hits === undefined ? {} : { learned: { group, hits } }),
+            ...(learned === undefined ? {} : { learned }),
           };
         }),
     );
@@ -203,6 +201,36 @@ export async function buildTodayList({
     entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder),
     full,
     failures: batches.flatMap((batch) => (batch.failed ? [batch.providerId] : [])),
+  };
+}
+
+/** 一条放置记录里的标签名里，命中次数最高的那个；同次按名字码元序破平（#36）。 */
+function bestLabelHit(
+  labels: readonly string[],
+  hits: ReadonlyMap<string, number>,
+): { name: string; hits: number } | undefined {
+  let best: { name: string; hits: number } | undefined;
+  for (const name of labels) {
+    const count = hits.get(name);
+    if (count === undefined) continue;
+    if (best === undefined || count > best.hits || (count === best.hits && name < best.name)) {
+      best = { name, hits: count };
+    }
+  }
+  return best;
+}
+
+/** 两维信号合成一条 learned；都没命中就缺席，界面上「有没有它」只有一种读法。 */
+function buildBoost(
+  group: string,
+  groupHits: number | undefined,
+  labelHit: { name: string; hits: number } | undefined,
+): LearnedBoost | undefined {
+  if (groupHits === undefined && labelHit === undefined) return undefined;
+  return {
+    ...(groupHits === undefined ? {} : { group: { name: group, hits: groupHits } }),
+    ...(labelHit === undefined ? {} : { label: labelHit }),
+    hits: Math.max(groupHits ?? 0, labelHit?.hits ?? 0),
   };
 }
 
@@ -267,9 +295,8 @@ function mergeDuplicates(entries: ListEntry[], sameEvent?: SameEvent): ListEntry
     }
     home.mergedFrom = [...(home.mergedFrom ?? [home.task]), entry.task];
     // 标签是摘要通道的输入：一张卡代表这件事的全部来源，标签取并集才说得全（#20）。
-    if (entry.labels !== undefined) {
-      home.labels = [...new Set([...(home.labels ?? []), ...entry.labels])];
-    }
+    // 标签是任务第九键：合并卡代表这件事的全部来源，标签取并集才说得全（#36）。
+    home.task = { ...home.task, labels: [...new Set([...home.task.labels, ...entry.task.labels])] };
     // 合并卡只要有一侧来自旧快照，整张卡就不算新鲜：水印取最早的那一刻，不把旧数据说新。
     if (
       entry.snapshotAt !== undefined &&
@@ -338,7 +365,6 @@ function compareByRecency(a: { task: Task }, b: { task: Task }): number {
 interface PresentTask {
   task: Task;
   done: boolean;
-  labels: readonly string[];
 }
 
 interface ProviderBatch {
@@ -381,7 +407,7 @@ async function buildOneSafely(
     return {
       providerId: provider.id,
       // 失败家的条目来自上一轮，那一轮只留未完成的卡片：没有「源站已完成」可判。
-      present: own.map((task) => ({ task, done: false, labels: [] as readonly string[] })),
+      present: own.map((task) => ({ task, done: false })),
       snapshotAt,
       failed: true,
     };
@@ -398,23 +424,20 @@ async function buildOne(
   const done = new Set(provider.doneStates());
   const deleted = new Set(provider.deletedStates());
 
-  const seen = (await provider.search(scope, http)).map((raw) => ({
-    task: provider.normalize(raw),
-    labels: provider.labels(raw),
-  }));
+  const seen = (await provider.search(scope, http)).map(provider.normalize);
 
   // 本轮视图已经给出这条的状态，就不再按 id 问第二次：再问一次只会把上一轮的旧状态请回来。
   const unseen = previous.filter(
-    (task) => task.providerId === provider.id && !seen.some((s) => s.task.id === task.id),
+    (task) => task.providerId === provider.id && !seen.some((s) => s.id === task.id),
   );
   const carried =
     unseen.length === 0 ? { tasks: [], unconfirmed: new Set<string>() } : await carryOver(provider, http, unseen);
 
   // 已完成与未完成用同一次 doneStates 判定：完整视图与水印都从这里读，不另判一遍。
   // 已删除的连完整视图也不留：那是「源站没有了」，不是「做完了」。
-  const present = [...seen, ...carried.tasks.map((task) => ({ task, labels: [] as readonly string[] }))]
-    .filter(({ task }) => !deleted.has(task.state))
-    .map(({ task, labels }) => ({ task, done: done.has(task.state), labels }));
+  const present = [...seen, ...carried.tasks]
+    .filter((task) => !deleted.has(task.state))
+    .map((task) => ({ task, done: done.has(task.state) }));
 
   return { present, unconfirmed: carried.unconfirmed };
 }

@@ -96,6 +96,7 @@ describe("seam 1 · 真实 GitHub provider：normalize 输出", () => {
       title: "修复登录回调",
       url: "https://github.com/jing-gou/triage360/issues/1041",
       state: "open",
+      labels: [],
       updatedAt: "2026-11-16T08:20:00.000Z",
       dueAt: "2026-11-16T00:00:00.000Z",
       duePrecision: "instant",
@@ -125,6 +126,7 @@ describe("seam 1 · 真实 GitHub provider：上一轮条目按 id 补取", () =
       title: "修复登录回调",
       url: "https://github.com/jing-gou/triage360/issues/1041",
       state: "open",
+      labels: [],
       updatedAt: "2026-11-16T08:20:00.000Z",
     };
     const { calls, http } = recordingHttp(
@@ -145,6 +147,7 @@ describe("seam 1 · 真实 GitHub provider：上一轮条目按 id 补取", () =
       title: "修复登录回调",
       url: "https://github.com/jing-gou/triage360/issues/1041",
       state: "open",
+      labels: [],
       updatedAt: "2026-11-16T08:20:00.000Z",
     };
     const { http } = recordingHttp([]);

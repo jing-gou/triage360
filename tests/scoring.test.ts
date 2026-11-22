@@ -219,7 +219,7 @@ describe("seam 1 · 时钟与确定性", () => {
 describe("seam 1 · 打分只吃元数据", () => {
   // AC#3 要挡的是「顺手从正文里读点东西」：日期写在描述里、"已逾期" 这种字样、LLM 的措辞。
   // 所以干扰项刻意写成能骗过一个「在正文里找日期」的实现；顺序与理由都不许因此改变。
-  // 理由还必须是八个键之外的那一个：`body` 不许被 normalize 带进任务里。
+  // 理由还必须是九个键之外的那一个：`body` 不许被 normalize 带进任务里。
   it("正文写什么都改不了顺序与理由", async () => {
     const quiet = [
       issue(2701, "中午交周报", "2026-11-16T10:00:00Z", "2026-11-17T12:00:00Z"),
@@ -241,10 +241,10 @@ describe("seam 1 · 打分只吃元数据", () => {
     ];
     expect(plain.entries.map((entry) => [entry.task.title, entry.reason])).toEqual(expected);
     expect(withBodies.entries.map((entry) => [entry.task.title, entry.reason])).toEqual(expected);
-    // 八键之外没有 `body`：正文不进任务，也就无处被打分读走。
+    // 九键之外没有 `body`：正文不进任务，也就无处被打分读走。
     expect(withBodies.entries.map((entry) => Object.keys(entry.task).sort().join(","))).toEqual([
-      "dueAt,duePrecision,id,providerId,state,title,updatedAt,url",
-      "dueAt,duePrecision,id,providerId,state,title,updatedAt,url",
+      "dueAt,duePrecision,id,labels,providerId,state,title,updatedAt,url",
+      "dueAt,duePrecision,id,labels,providerId,state,title,updatedAt,url",
     ]);
   });
 });

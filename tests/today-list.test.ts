@@ -102,6 +102,7 @@ describe("seam 1 · normalize 定稿：两家形状不同的源站归一化成�
         title: "修复登录回调",
         url: "https://github.com/jing-gou/triage360/issues/2001",
         state: "open",
+        labels: [],
         updatedAt: "2026-11-16T08:20:00.000Z",
       },
       {
@@ -110,6 +111,7 @@ describe("seam 1 · normalize 定稿：两家形状不同的源站归一化成�
         title: "整理提交材料",
         url: "https://sample-jira.atlassian.net/browse/TRI-7",
         state: "In Progress",
+        labels: [],
         updatedAt: "2026-11-16T01:00:00.000Z",
       },
     ]);
@@ -167,6 +169,7 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
         title: "补全导入模板",
         url: "https://github.com/jing-gou/triage360/issues/2002",
         state: "open",
+        labels: [],
         updatedAt: "2026-11-16T06:00:00.000Z",
         dueAt: "2026-11-17T23:00:00.000Z",
         duePrecision: "instant",
@@ -177,6 +180,7 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
         title: "核对工时表",
         url: "https://sample-jira.atlassian.net/browse/TRI-8",
         state: "To Do",
+        labels: [],
         updatedAt: "2026-11-16T04:00:00.000Z",
         dueAt: "2026-11-18T01:00:00.000Z",
         duePrecision: "instant",
@@ -185,7 +189,7 @@ describe("seam 1 · 定稿的截止时间：dueAt 与 updatedAt 同一个 UTC �
   });
 });
 
-describe("seam 1 · 定稿的门：输出形状就是那八个键", () => {
+describe("seam 1 · 定稿的门：输出形状就是那九个键", () => {
   // toEqual 不会因为多一个 `dueAt: undefined` 而红，所以形状要单独钉住：
   // 「定稿」这句话得有一道能挡反例的门。键集合也不能按平台分叉——
   // 没有截止时间的条目照样写出 dueAt，否则 #6 的打分要先判「这家有没有这个键」。
@@ -196,7 +200,7 @@ describe("seam 1 · 定稿的门：输出形状就是那八个键", () => {
     feishu: { view: [feishuTask("task-9", "催一下季度评审材料", false, "2026-11-16T13:10:00+08:00")] },
   });
 
-  it("四家归一化之后的键集合完全一致，且恒为八个", async () => {
+  it("四家归一化之后的键集合完全一致，且恒为九个", async () => {
     const list = await buildTodayList({
       providers: [createGithubLikeProvider(), createGiteeLikeProvider(), createJiraLikeProvider(), createFeishuSampleProvider()],
       http,
@@ -207,7 +211,7 @@ describe("seam 1 · 定稿的门：输出形状就是那八个键", () => {
     const shapes = list.entries.map((entry) => Object.keys(entry.task).sort().join(","));
 
     expect(list.entries).toHaveLength(4);
-    expect([...new Set(shapes)]).toEqual(["dueAt,duePrecision,id,providerId,state,title,updatedAt,url"]);
+    expect([...new Set(shapes)]).toEqual(["dueAt,duePrecision,id,labels,providerId,state,title,updatedAt,url"]);
   });
 });
 
@@ -300,6 +304,7 @@ describe("seam 1 · 下一轮构建", () => {
         title: "排查 Gitee 403",
         url: "https://sample-jira.atlassian.net/browse/TRI-41",
         state: "In Progress",
+        labels: [],
         updatedAt: "2026-11-16T06:00:00.000Z",
       },
     ]);
@@ -394,6 +399,7 @@ describe("seam 1 · 下一轮构建", () => {
         title: "回调地址改名后失效",
         url: "https://gitee.com/jing-gou/triage360/issues/313",
         state: "progress",
+        labels: [],
         updatedAt: "2026-11-16T09:05:00.000Z",
       },
     ]);
@@ -526,6 +532,7 @@ describe("seam 1 · Gitee 与飞书 的形状差异", () => {
         title: "回调地址改名后失效",
         url: "https://gitee.com/jing-gou/triage360/issues/313",
         state: "progress",
+        labels: [],
         updatedAt: "2026-11-16T09:05:00.000Z",
       },
       {
@@ -534,6 +541,7 @@ describe("seam 1 · Gitee 与飞书 的形状差异", () => {
         title: "导入的历史工时少一天",
         url: "https://gitee.com/jing-gou/legacy-importer/issues/313",
         state: "ongoing",
+        labels: [],
         updatedAt: "2026-11-16T07:30:00.000Z",
       },
     ]);
@@ -559,6 +567,7 @@ describe("seam 1 · Gitee 与飞书 的形状差异", () => {
         title: "催一下季度评审材料",
         url: "https://applink.feishu.cn/client/todo/detail?guid=task-9",
         state: "open",
+        labels: [],
         updatedAt: "2026-11-16T05:10:00.000Z",
       },
     ]);

@@ -53,12 +53,15 @@ export function clearLearningRecords(): void {
 
 function isPlacementRecord(one: unknown): one is PlacementRecord {
   if (typeof one !== "object" || one === null) return false;
-  const { providerId, taskId, group, at, position } = one as Record<string, unknown>;
+  const { providerId, taskId, group, at, position, labels } = one as Record<string, unknown>;
+  const labelsOk =
+    labels === undefined || (Array.isArray(labels) && labels.every((one) => typeof one === "string"));
   return (
     typeof providerId === "string" &&
     typeof taskId === "string" &&
     typeof group === "string" &&
     typeof at === "string" &&
-    typeof position === "number"
+    typeof position === "number" &&
+    labelsOk
   );
 }

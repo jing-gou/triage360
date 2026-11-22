@@ -17,6 +17,7 @@ interface JiraIssue {
   fields: {
     summary: string;
     status: { name: string };
+    labels?: unknown;
     updated: string;
     /** Jira Cloud 的 `duedate` 可以是 null；带时刻时同样带本地偏移。 */
     duedate?: string | null;
@@ -49,14 +50,12 @@ export function createJiraLikeProvider(): Provider {
         title: issue.fields.summary,
         url: `${SITE}/browse/${issue.key}`,
         state: issue.fields.status.name,
+        labels: labelNames(issue.fields.labels),
         updatedAt: new Date(issue.fields.updated).toISOString(),
         ...(issue.fields.duedate ? dueFrom(issue.fields.duedate) : { dueAt: undefined, duePrecision: undefined }),
       };
     },
 
-    labels(raw) {
-      return labelNames((raw as { fields?: { labels?: unknown } }).fields?.labels);
-    },
 
     doneStates() {
       return ["Done"];
