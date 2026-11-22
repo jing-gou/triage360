@@ -3,7 +3,7 @@ import type { DeepseekConfig } from "./config";
 
 /**
  * 「AI 提炼」的摘要通道（#20）：一次一条，面板并发调用，逐条填进卡片。
- * 上行只有标题与标签——正文、评论、diff 一概不送；标签来自同一轮取数的源站原件（provider.labels）。
+ * 上行只有标题与标签——正文、评论、diff 一概不送；标签来自同一轮取数归一化后的任务（`Task.labels`，第九键）。
  */
 
 export class SummaryUnavailableError extends Error {}

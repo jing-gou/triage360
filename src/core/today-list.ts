@@ -106,9 +106,20 @@ export interface ListEntry {
  * `hits` 是排序用的强度——两维都命中时取较大者，理由句照样把两维都说出来。
  */
 export interface LearnedBoost {
-  group?: { name: string; hits: number };
-  label?: { name: string; hits: number };
+  group?: LearnedSignal;
+  label?: LearnedSignal;
   hits: number;
+}
+
+/** 学习信号的一维：名字与窗口内的命中次数。 */
+export interface LearnedSignal {
+  name: string;
+  hits: number;
+}
+
+/** 排序强度：两维里较大的命中次数；reason 通道合成 learned 时也读这一处。 */
+export function learnedHits(group?: LearnedSignal, label?: LearnedSignal): number {
+  return Math.max(group?.hits ?? 0, label?.hits ?? 0);
 }
 
 /** 「这两条是不是同一件事」：语义匹配与 #7 的判定表都实现这一个签名。 */
@@ -175,10 +186,7 @@ export async function buildTodayList({
   // 比较落到原来的 updatedAt → 码元序，ADR-0005 定下来的档内序一个字没动。
   // 末位按 id 破平：档位与更新时间都相同的那些条目不能由 provider 返回的数组顺序决定，
   // 那个顺序不属于本应用（T05 合并四家之后更明显）。
-  entries.sort(
-    (a, b) =>
-      compareTier(a, b) || (b.learned?.hits ?? 0) - (a.learned?.hits ?? 0) || compareByRecency(a, b),
-  );
+  entries.sort(compareEntries);
 
   // 完整视图从同一轮取数里切出来：不额外发请求，也不参与合并与手动顺序（#18）。
   const full: FullEntry[] = batches.flatMap((batch) =>
@@ -196,20 +204,39 @@ export async function buildTodayList({
       (a.done ? compareByRecency(a, b) : compareTier(a, b) || compareByRecency(a, b)),
   );
 
+  // 合并卡代表这件事的全部来源：标签并集写回表头之后，学习信号要按并集重算，
+  // 否则兄弟来源里命中的标签永远抬不动这张卡（#36）。
+  const merged = mergeDuplicates(entries, sameEvent);
+  for (const entry of merged) {
+    const learned = buildBoost(
+      sourceGroupOf(entry.task),
+      groupBoost.get(sourceGroupOf(entry.task)),
+      bestLabelHit(entry.task.labels, labelBoost),
+    );
+    if (learned === undefined) delete entry.learned;
+    else entry.learned = learned;
+  }
+  merged.sort(compareEntries);
+
   return {
     generatedAt: instant,
-    entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder),
+    entries: applyManualOrder(merged, manualOrder),
     full,
     failures: batches.flatMap((batch) => (batch.failed ? [batch.providerId] : [])),
   };
+}
+
+/** 今日清单与合并后的重排共用一套序：档位 → 加权强度 → 更新时间 → id。 */
+function compareEntries(a: ListEntry, b: ListEntry): number {
+  return compareTier(a, b) || (b.learned?.hits ?? 0) - (a.learned?.hits ?? 0) || compareByRecency(a, b);
 }
 
 /** 一条放置记录里的标签名里，命中次数最高的那个；同次按名字码元序破平（#36）。 */
 function bestLabelHit(
   labels: readonly string[],
   hits: ReadonlyMap<string, number>,
-): { name: string; hits: number } | undefined {
-  let best: { name: string; hits: number } | undefined;
+): LearnedSignal | undefined {
+  let best: LearnedSignal | undefined;
   for (const name of labels) {
     const count = hits.get(name);
     if (count === undefined) continue;
@@ -224,13 +251,13 @@ function bestLabelHit(
 function buildBoost(
   group: string,
   groupHits: number | undefined,
-  labelHit: { name: string; hits: number } | undefined,
+  labelHit: LearnedSignal | undefined,
 ): LearnedBoost | undefined {
   if (groupHits === undefined && labelHit === undefined) return undefined;
   return {
     ...(groupHits === undefined ? {} : { group: { name: group, hits: groupHits } }),
     ...(labelHit === undefined ? {} : { label: labelHit }),
-    hits: Math.max(groupHits ?? 0, labelHit?.hits ?? 0),
+    hits: learnedHits(groupHits === undefined ? undefined : { name: group, hits: groupHits }, labelHit),
   };
 }
 

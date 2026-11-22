@@ -1300,7 +1300,6 @@ export function App() {
   );
 }
 
-/** 纯规则那句：没有 AI 时的唯一措辞来源，也是 AI 失败与超时时的回落。 */
 /** 命中行的说法：来源分组与标签各说各的，两个都命中就一起说（#36）。 */
 function learnedSignal(learned: LearnedBoost): string {
   const parts: string[] = [];
@@ -1309,6 +1308,7 @@ function learnedSignal(learned: LearnedBoost): string {
   return parts.join(" 和 ");
 }
 
+/** 纯规则那句：没有 AI 时的唯一措辞来源，也是 AI 失败与超时时的回落。 */
 function ruleWording(entry: ListEntry): string {
   const base = RULE_WORDINGS[entry.reason];
   if (entry.learned === undefined) return base;

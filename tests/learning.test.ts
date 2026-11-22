@@ -320,3 +320,59 @@ describe("seam 1 · 学习闭环按标签加权（#36）", () => {
     });
   });
 });
+
+describe("seam 1 · 合并卡的标签在并集之后才参与加权（#36）", () => {
+  it("兄弟来源命中的标签也能抬起合并卡，即使表头自己没有这个标签", async () => {
+    const http = fakeHttp({
+      github: {
+        view: [
+          {
+            ...labelled(981, "登录页 500", "2026-11-16T10:00:00Z", []),
+            milestone: { due_on: "2026-11-10T00:00:00Z" },
+          },
+        ],
+      },
+      gitee: { view: [{ ...ge(981, "Login 接口偶发 500", "2026-11-15T10:00:00Z"), labels: [{ name: "bug" }] }] },
+    });
+    const placements = [
+      record("github:901", "2026-11-16T10:00:00.000Z", 0, "other/repo", ["bug"]),
+      record("github:902", "2026-11-15T10:00:00.000Z", 1, "other/repo", ["bug"]),
+    ];
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider(), createGiteeLikeProvider()],
+      http,
+      now: clock,
+      scope,
+      placements,
+      sameEvent: (a, b) => a.title.includes("500") && b.title.includes("500"),
+    });
+
+    expect(list.entries).toHaveLength(1);
+    // 表头是逾期的 GitHub 条（无标签），并集里的 bug 来自 Gitee 兄弟来源。
+    expect(list.entries[0]?.task.id).toBe("github:981");
+    expect(list.entries[0]?.task.labels).toEqual(["bug"]);
+    expect(list.entries[0]?.learned).toEqual({ label: { name: "bug", hits: 2 }, hits: 2 });
+  });
+
+  it("一张卡命中多个标签时，只取命中次数最高的那个；同次按名字码元序破平", async () => {
+    const http = fakeHttp({
+      github: { view: [labelled(991, "两个标签都命中", "2026-11-14T10:00:00Z", ["alpha", "beta"])] },
+    });
+    const placements = [
+      record("github:901", "2026-11-16T10:00:00.000Z", 0, "other/repo", ["alpha", "beta"]),
+      record("github:902", "2026-11-15T10:00:00.000Z", 1, "other/repo", ["alpha"]),
+      record("github:903", "2026-11-15T09:00:00.000Z", 2, "other/repo", ["beta"]),
+    ];
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider()],
+      http,
+      now: clock,
+      scope,
+      placements,
+    });
+
+    expect(list.entries[0]?.learned).toEqual({ label: { name: "alpha", hits: 2 }, hits: 2 });
+  });
+});

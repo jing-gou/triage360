@@ -33,7 +33,7 @@ function gitee(repo: string, number: number, title: string, labels: string[]) {
 }
 
 describe("seam 1 · 摘要通道要的标签（#20）", () => {
-  it("条目的标签名从源站原件带出来，不塞进任务八键", async () => {
+  it("条目的标签名从源站原件带出来，作为任务第九键", async () => {
     const list = await buildTodayList({
       providers: [createGithubLikeProvider()],
       http: fakeHttp({ github: { view: [github(7101, "修复登录回调", ["bug", "ui"])] } }),

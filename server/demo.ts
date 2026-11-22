@@ -132,7 +132,10 @@ export class DemoRefresher {
     // 完成态的判定跟构建器同一处来：provider 的 doneStates，不在这里再抄一份平台字面量。
     const githubProvider = createGithubProvider();
     const giteeProvider = createGiteeProvider();
-    const keyed = (provider: Provider, raw: RawItem) => ({ raw, provider, key: summaryKeyOf(provider, raw) });
+    const keyed = (provider: Provider, raw: RawItem) => {
+      const task = provider.normalize(raw);
+      return { raw, provider, task, key: taskSummaryKey(task) };
+    };
     const github = snapshot.items.map((raw) => keyed(githubProvider, raw));
     const gitee = snapshot.gitee.map((raw) => keyed(giteeProvider, raw));
     const all = [...github, ...gitee];
@@ -147,7 +150,7 @@ export class DemoRefresher {
       ...github.filter((one) => notDone(one, githubProvider)),
       ...gitee.filter((one) => notDone(one, giteeProvider)),
     ]
-      .filter((one): one is { raw: RawItem; provider: Provider; key: string } => one.key !== null && snapshot.summaries[one.key] === undefined)
+      .filter((one) => snapshot.summaries[one.key] === undefined)
       .sort((a, b) => String(b.raw.updated_at ?? "").localeCompare(String(a.raw.updated_at ?? "")))
       .slice(0, SUMMARY_LIMIT);
     if (todo.length === 0) return;
@@ -163,7 +166,7 @@ export class DemoRefresher {
         try {
           const { text } = await composeSummary(this.config.deepseek, {
             title: typeof item.raw.title === "string" ? item.raw.title : "",
-            labels: [...item.provider.normalize(item.raw).labels],
+            labels: [...item.task.labels],
           });
           snapshot.summaries[item.key] = text;
         } catch {
@@ -203,14 +206,3 @@ export class DemoRefresher {
   }
 }
 
-/**
- * 演示摘要的键：交给 provider 归一化后的任务 id（`provider:remoteId`）再拼归一化时间，
- * 与面板的 `summaryKey` 完全同一个口径（provider + issue_id + updated_at）。
- */
-function summaryKeyOf(provider: Provider, raw: RawItem): string | null {
-  try {
-    return taskSummaryKey(provider.normalize(raw));
-  } catch {
-    return null;
-  }
-}

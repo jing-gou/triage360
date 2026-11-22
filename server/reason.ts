@@ -1,4 +1,4 @@
-import { RULE_IDS, type RuleId } from "../src/core/today-list";
+import { RULE_IDS, learnedHits, type LearnedSignal, type RuleId } from "../src/core/today-list";
 import type { ReasonCard } from "../src/core/reason-card";
 import type { DeepseekConfig } from "./config";
 
@@ -46,7 +46,7 @@ export function parseReasonCard(value: unknown): ReasonCard | null {
       learned = {
         ...(group === undefined ? {} : { group }),
         ...(label === undefined ? {} : { label }),
-        hits: Math.max(group?.hits ?? 0, label?.hits ?? 0),
+        hits: learnedHits(group, label),
       };
     }
   }
@@ -119,7 +119,7 @@ export async function composeReasonWording(
 }
 
 /** learned 里的一维信号：`{ name, hits }`，逐字段验，别的键丢掉。 */
-function parseSignal(value: unknown): { name: string; hits: number } | undefined {
+function parseSignal(value: unknown): LearnedSignal | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { name, hits } = value as Record<string, unknown>;
   const label = text(name, 1, 140);

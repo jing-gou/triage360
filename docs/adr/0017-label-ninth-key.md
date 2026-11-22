@@ -1,6 +1,6 @@
 # ADR-0017 · 标签进任务第九键；学习加权按 repo 与 label 两维、同一套门槛
 
-**决策**：`Task` 从八键扩到九键，新增 `labels: readonly string[]`（归一化后恒定存在，没有标签就是空数组）。`normalize` 负责把各家的标签形状消化成这一键：GitHub / Gitee 的 `[{ name }]`、Jira 的 `fields.labels`、飞书没有标签即空。`Provider.labels(raw)` 这个为摘要临时加的第八法被删除，契约回到七法。合并卡把各来源的标签取并集写回表头任务——一张卡代表同一件事的全部来源。
+**决策**：`Task` 从八键扩到九键，新增 `labels: readonly string[]`（归一化后恒定存在，没有标签就是空数组）。`normalize` 负责把各家的标签形状消化成这一键：GitHub / Gitee 的 `[{ name }]`、Jira 的 `fields.labels`、飞书 v1 零真连、标签不在射程内，`normalize` 恒给空数组只为九键形状一致。`Provider.labels(raw)` 这个为摘要临时加的第八法被删除，契约回到七法。合并卡把各来源的标签取并集写回表头任务——一张卡代表同一件事的全部来源。
 
 学习闭环因此按两维记账：`PlacementRecord` 新增可选 `labels`（放置那一刻这张卡的标签并集，与 `group` 同一个理由存下来，之后任务消失或改标签就没人重算得准）；`hitsByGroup` 与 `hitsByLabel` 共用一遍 `countHits`，门槛仍是 7 天 / 前三位 / 两次起（ADR-0009 的三个数字一个字没改）。`LearnedBoost` 改成 `{ group?: { name, hits }, label?: { name, hits }, hits }`：命中哪维就带哪维，`hits` 是排序强度、取两维中的较大者；一张卡命中多个标签时只取命中次数最高的那个，同次按名字码元序破平。排序仍只在这一层与「更新时间 → id」之间生效，越不过档位。
 
@@ -8,4 +8,4 @@
 
 **被放弃的选项**：继续把标签挂在 `ListEntry` 上（摘要够用，学习跨轮不稳，且两个消费方各读一处，形状迟早分叉）；保留 `Provider.labels(raw)` 与九键并存（同一个概念两个出口）；把 label 只做成 `sourceGroupOf` 那样的派生键（provider 名之外没有可派生 label 的字段，派生不出来）；对多标签命中全部加权并全列进理由句（一句话里堆三个标签不是可解释，是噪声）；给 label 单独一套门槛数字（没有证据说明标签的「两次」与 repo 的「两次」该不同）。
 
-**代价**：① 九键定稿让所有 provider、fixture 与「形状门」测试同步扩一列；跨轮快照省掉 `labels` 会静默退化（与 `duePrecision` 同一个坑）。② 放置记录多一个可选键，旧记录按「没有标签」处理，读端要一直容忍它缺席。③ `LearnedBoost` 是不兼容改名（`group: string` → `group: { name, hits }`），#8 的解析与校验、卡片命中行、规则回落句四处一起改；理由句现在要能同时说出分组与标签。④ 标签是源站自由文本，同一概念在不同仓库可能叫 `bug` / `Bug` / `defect`，v1 不做归一。⑤ 一手样本：GitHub / Gitee 的标签来自生产演示快照（`/api/demo/items` 的原始条目带 `labels`），Jira 的 `fields.labels` 只有契约测试与 Atlassian 文档依据——#19 的会话已关闭，取不到新的 Jira 一手样本，这条缺口留在票面评论里。
+**代价**：① 九键定稿让所有 provider、fixture 与「形状门」测试同步扩一列；跨轮快照省掉 `labels` 会静默退化（与 `duePrecision` 同一个坑）。② 放置记录多一个可选键，旧记录按「没有标签」处理，读端要一直容忍它缺席。③ `LearnedBoost` 是不兼容改名（`group: string` → `group: { name, hits }`），#8 的解析与校验、卡片命中行、规则回落句四处一起改；理由句现在要能同时说出分组与标签。④ 标签是源站自由文本，同一概念在不同仓库可能叫 `bug` / `Bug` / `defect`，v1 不做归一。⑤ 一手样本：GitHub 用 `gh api` 直接读到仓库 issue 的 `labels`，Gitee 用生产演示快照（`/api/demo/items` 的原始条目带 `labels`）；Jira 的 `fields.labels` 只有契约测试与 Atlassian 文档依据——#19 的会话已关闭，取不到新的 Jira 一手样本，这条缺口留给 #36 的收口评论，并在 AC 上如实降级。
