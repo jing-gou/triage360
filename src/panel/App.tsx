@@ -278,7 +278,7 @@ type Dialog = "consent" | "revoke" | "clear-local" | "tiers";
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
   /** 完整视图（#18）：展开只切换渲染哪一份，取数在每一轮里早已完成，不会再发请求。 */
-  const [expanded, setExpanded] = useState(false);
+  const [fullViewOpen, setFullViewOpen] = useState(false);
   const [notice, setNotice] = useState<OrderNotice | null>(null);
   const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
   /** 这一屏走的是真实链路：记录服务端还握着哪几家的授权；`null` = 样例屏。 */
@@ -708,28 +708,28 @@ export function App() {
       ? "这一轮没有可显示的任务，原因在右下角。"
       : "今天没有指派给你的任务。";
   // 完整视图的入口与计数都从这里读一次，不在 JSX 里各算一遍。
-  const doneCount = list.full.filter((entry) => entry.done).length;
-  const hasFull = connected !== null && doneCount > 0;
+  const completedCount = list.full.filter((entry) => entry.done).length;
+  const hasFullView = connected !== null && completedCount > 0;
 
   return (
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
       {/* 完整视图只在源站确实带回了已完成条目时出现；样例屏（connected === null）不给，
           那一屏全是字面量，展开只会把样例当成对照数据。 */}
-      {hasFull && (
+      {hasFullView && (
         <p className="view-toggle-row">
           <button
-            aria-expanded={expanded}
+            aria-expanded={fullViewOpen}
             className="view-toggle"
-            onClick={() => setExpanded(!expanded)}
+            onClick={() => setFullViewOpen(!fullViewOpen)}
             type="button"
           >
-            {expanded ? "收起，回到今日清单" : `展开完整视图（${list.full.length} 条）`}
+            {fullViewOpen ? "收起，回到今日清单" : `展开完整视图（${list.full.length} 条）`}
           </button>
-          {expanded && <span className="view-toggle-note">含已完成 {doneCount} 条，未完成在前</span>}
+          {fullViewOpen && <span className="view-toggle-note">含已完成 {completedCount} 条，未完成在前</span>}
         </p>
       )}
-      {expanded && hasFull ? (
+      {fullViewOpen && hasFullView ? (
         <ol className="full-list">
           {list.full.map((entry) => {
             const { task, reason, done, snapshotAt } = entry;
