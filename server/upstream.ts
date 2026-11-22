@@ -320,12 +320,11 @@ export class Upstream {
     const running = this.jiraInFlight.get(key);
     if (running !== undefined) {
       const snapshot = await running;
-      // 等来的结果出自别人那份租户副本：重读账本，避免自己这份继续拿着已轮换的旧 token。
+      // 等来的结果出自别人那份租户副本：先清掉旧的 Jira 授权，再重读账本。
+      // 首请求若因 401 把整条租户删了，这里 `find` 会返回 undefined，清理不能只放在分支里。
+      delete tenant.jira;
       const fresh = this.store.find(sessionId);
-      if (fresh !== undefined) {
-        delete tenant.jira;
-        Object.assign(tenant, fresh);
-      }
+      if (fresh !== undefined) Object.assign(tenant, fresh);
       return snapshot;
     }
     const run = this.fetchJira(tenant, sessionId, previousIds).finally(() => {

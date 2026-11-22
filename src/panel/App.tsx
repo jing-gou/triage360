@@ -43,8 +43,8 @@ const authProviders: Provider[] = [
 ];
 const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
-/** 这一轮服务端手里还握着哪几家的授权；`null` = 这一屏没走真实链路。 */
-type Connected = { github: boolean; gitee: boolean };
+/** 这一轮服务端手里还握着哪几家的授权；`null` = 这一屏没走真实链路。Jira 只出现在内部自证里，没有界面入口。 */
+type Connected = { github: boolean; gitee: boolean; jira?: boolean };
 
 /** 可见 tab 的轮询间隔：两家的 `pollIntervalMs()` 都是 30 秒，这里取同一个节拍。 */
 const POLL_MS = 30_000;
