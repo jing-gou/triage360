@@ -19,6 +19,7 @@ import {
   forgetSession,
   requestAuthUrl,
   requestReason,
+  requestSummary,
   revokeSession,
   UnauthenticatedError,
   type DemoPayload,
@@ -27,6 +28,7 @@ import {
   type TierGrant,
 } from "./api";
 import { createSnapshotHttp, type SnapshotFailure } from "./snapshot-http";
+import { cachedSummary, rememberSummary, summaryKey } from "./summary-cache";
 import type { ReasonCard } from "../core/reason-card";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { clearLocalRecords, hasLocalRecords } from "./local-records";
@@ -264,6 +266,8 @@ const RULE_WORDINGS: Record<RuleId, string> = {
 
 /** 一张卡被问过「为什么」之后的状态：加载中，或者一句话（AI 措辞 / 规则回落）。 */
 type WhyState = { status: "loading" } | { status: "ready"; text: string };
+/** 「AI 提炼」的卡片状态：与 why 同一个形状，但键是 `task.id@updatedAt`（源站一更新就自动失效）。 */
+type SummaryState = { status: "loading" } | { status: "ready"; text: string };
 
 /** 首次主动排序后要说的话：动了哪一条、从第几位到第几位。 */
 interface OrderNotice {
@@ -306,6 +310,11 @@ export function App() {
   const [auth, setAuth] = useState<GithubAuth | null>(null);
   /** 每张卡被问过「为什么」之后的那句话；键是卡片标识（合并卡即表头 id）。 */
   const [why, setWhy] = useState<Record<string, WhyState>>({});
+  /** 「AI 提炼」的结果；键带 updatedAt，源站更新后旧摘要自然不再命中。 */
+  const [summaries, setSummaries] = useState<Record<string, SummaryState>>({});
+  const [summarizing, setSummarizing] = useState(false);
+  /** 演示屏没有会话，摘要由服务端刷新时预生成（#20）；没有它就藏起按钮。 */
+  const [demoSummaries, setDemoSummaries] = useState<Record<string, string> | null>(null);
   // 拖拽会把在途请求的答案作废：请求发出时记下代数，回来时代数变了就丢掉，不把旧句写回手动区。
   const whyEpoch = useRef(0);
 
@@ -412,6 +421,7 @@ export function App() {
       setProblems(problemsFrom(payload, expired, droppedTiers));
       setRefreshNote(null);
       setReconnect(false);
+      setDemoSummaries(null);
       return true;
     }
 
@@ -453,6 +463,8 @@ export function App() {
       setConnected(snapshot.connected);
       setDemo(true);
       setAuth(null);
+      const precomputed = snapshot.summaries ?? {};
+      setDemoSummaries(Object.keys(precomputed).length === 0 ? null : precomputed);
       setProblems(
         forcedHere && forcedFailure !== null
           ? [{ providerId: forcedFailure, kind: "unavailable", detail: "演示：模拟这一家取数失败。" }]
@@ -479,6 +491,7 @@ export function App() {
       setConnected(null);
       setDemo(false);
       setAuth(null);
+      setDemoSummaries(null);
       setProblems([]);
       setRefreshNote(null);
     }
@@ -620,6 +633,71 @@ export function App() {
     }
   }
 
+  /**
+   * 「AI 提炼」（#20）：一次最多 20 张卡，并发 3 条、哪条先回来先填哪张。
+   * 演示屏读服务端预生成的摘要；真实屏按 `task.id@updatedAt` 先看本机缓存，再打 `/api/summary`。
+   * 只更新摘要状态，不碰 list / 拖拽，所以摘要长出来的过程中排序照常可用。
+   */
+  async function summarize(): Promise<void> {
+    if (list === null || summarizing) return;
+    const cards = list.entries.slice(0, 20);
+    setSummarizing(true);
+    try {
+      if (demoSummaries !== null) {
+        const ready: Record<string, SummaryState> = {};
+        for (const entry of cards) {
+          const text = demoSummaries[`${entry.task.url}@${entry.task.updatedAt}`];
+          if (text !== undefined) ready[summaryKey(entry.task)] = { status: "ready", text };
+        }
+        setSummaries((one) => ({ ...one, ...ready }));
+        return;
+      }
+      const session = live ? adoptSessionFromUrl() : null;
+      if (session === null) return;
+      const pending = cards.filter((entry) => {
+        const key = summaryKey(entry.task);
+        return summaries[key] === undefined && cachedSummary(entry.task) === null;
+      });
+      if (pending.length === 0) return;
+      setSummaries((one) => {
+        const next = { ...one };
+        for (const entry of pending) next[summaryKey(entry.task)] = { status: "loading" };
+        return next;
+      });
+      let cursor = 0;
+      const worker = async (): Promise<void> => {
+        for (;;) {
+          const chunk = pending[cursor++];
+          if (chunk === undefined) return;
+          const key = summaryKey(chunk.task);
+          try {
+            const { text } = await requestSummary(API_BASE, session, {
+              title: chunk.task.title,
+              labels: [...(chunk.labels ?? [])],
+              updatedAt: chunk.task.updatedAt,
+            });
+            rememberSummary(chunk.task, text);
+            setSummaries((one) => ({ ...one, [key]: { status: "ready", text } }));
+          } catch (error) {
+            if (error instanceof UnauthenticatedError) {
+              forgetSession();
+              setHasSession(false);
+              setAuth(null);
+              setReconnect(true);
+            }
+            setSummaries((one) => {
+              const { [key]: _dropped, ...rest } = one;
+              return rest;
+            });
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
+    } finally {
+      setSummarizing(false);
+    }
+  }
+
   function openDialog(next: Dialog): void {
     setDialogError(null);
     setDialogBusy(false);
@@ -738,6 +816,14 @@ export function App() {
           )}
         </p>
       )}
+      {(live || demoSummaries !== null) && (
+        <p className="ai-row">
+          <button className="ai-button" disabled={summarizing} onClick={() => void summarize()} type="button">
+            {summarizing ? "正在提炼…" : "AI 提炼"}
+          </button>
+          <span className="ai-note">AI 只看得到标题和标签，看不到正文和评论</span>
+        </p>
+      )}
       {fullViewOpen && hasFullView ? (
         <ol className="full-list">
           {list.full.map((entry) => {
@@ -776,6 +862,9 @@ export function App() {
               ? []
               : [...new Set(mergedFrom.slice(1).map((one) => sourceLabel(one.providerId, connected).label))];
           const whyState = why[task.id];
+          const known = summaries[summaryKey(task)];
+          const cached = known === undefined ? cachedSummary(task) : null;
+          const summary = known ?? (cached === null ? undefined : { status: "ready" as const, text: cached });
           const samples = [
             ...new Set(
               sources
@@ -821,6 +910,11 @@ export function App() {
               <a className="card-title" href={task.url} draggable={false}>
                 {task.title}
               </a>
+              {summary !== undefined && (
+                <p className={`card-summary${summary.status === "loading" ? " card-summary--loading" : ""}`}>
+                  {summary.status === "loading" ? "正在提炼…" : summary.text}
+                </p>
+              )}
               <p className="card-meta">
                 {sources.map((one) => {
                   const source = sourceLabel(one.providerId, connected);

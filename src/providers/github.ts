@@ -1,4 +1,4 @@
-import { dueFrom, makeTaskId, remoteIdOf, tieredAuth, type Provider, type RawItem, type Task, type TierChoice } from "../core/provider";
+import { dueFrom, makeTaskId, remoteIdOf, tieredAuth, labelNames, type Provider, type RawItem, type Task, type TierChoice } from "../core/provider";
 
 /**
  * 真实 GitHub provider（T09）：请求形状与 GitLab/Gitee 的差异全在这里消化。
@@ -103,6 +103,10 @@ export function createGithubProvider(): Provider {
         updatedAt: new Date(issue.updated_at).toISOString(),
         ...(issue.milestone?.due_on ? dueFrom(issue.milestone.due_on) : { dueAt: undefined, duePrecision: undefined }),
       };
+    },
+
+    labels(raw) {
+      return labelNames((raw as { labels?: unknown }).labels);
     },
 
     doneStates() {

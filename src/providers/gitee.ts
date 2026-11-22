@@ -1,4 +1,4 @@
-import { dueFrom, makeTaskId, remoteIdOf, uniformAuth, type Provider, type RawItem, type Task } from "../core/provider";
+import { dueFrom, makeTaskId, remoteIdOf, uniformAuth, labelNames, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 真实 Gitee provider（T15/#17）：请求形状与 GitHub 的差异全在这里消化。
@@ -104,6 +104,10 @@ export function createGiteeProvider(): Provider {
           ? dueFrom(issue.deadline)
           : { dueAt: undefined, duePrecision: undefined }),
       };
+    },
+
+    labels(raw) {
+      return labelNames((raw as { labels?: unknown }).labels);
     },
 
     doneStates() {

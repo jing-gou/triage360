@@ -1,4 +1,4 @@
-import { dueFrom, makeTaskId, remoteIdOf, uniformAuth, type Provider, type RawItem, type Task } from "../core/provider";
+import { dueFrom, makeTaskId, remoteIdOf, uniformAuth, labelNames, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 真实 Jira Cloud provider（#19 内部自证）：与另外两家的差异都在这里消化。
@@ -81,6 +81,10 @@ export function createJiraProvider({ cloudId, siteUrl }: JiraProviderOptions): P
           ? dueFrom(due)
           : { dueAt: undefined, duePrecision: undefined }),
       };
+    },
+
+    labels(raw) {
+      return labelNames((raw as { fields?: { labels?: unknown } }).fields?.labels);
     },
 
     doneStates() {

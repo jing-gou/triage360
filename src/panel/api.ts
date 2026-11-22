@@ -100,6 +100,8 @@ export interface DemoPayload {
   items: unknown[];
   gitee: unknown[];
   connected: { github: boolean; gitee: boolean };
+  /** 演示屏专用的预生成摘要（#20）：键 `<html_url>@<updatedAt ISO>`。 */
+  summaries?: Record<string, string>;
 }
 
 export async function fetchDemoItems(base: string): Promise<DemoPayload> {
@@ -150,5 +152,30 @@ export async function requestReason(base: string, session: string, card: ReasonC
   if (!res.ok) throw new Error(`reason 返回 ${res.status}`);
   const body = (await res.json()) as { text?: unknown };
   if (typeof body.text !== "string" || body.text === "") throw new Error("reason 没有给出文案");
+  return { text: body.text };
+}
+
+/** 「AI 提炼」的一条摘要（#20）：服务端 6 秒超时，客户端留到 8 秒；失败就留空，下一次重问。 */
+export interface SummaryCard {
+  title: string;
+  labels: string[];
+  updatedAt: string;
+}
+
+export async function requestSummary(
+  base: string,
+  session: string,
+  card: SummaryCard,
+): Promise<{ text: string }> {
+  const res = await fetch(`${base}/api/summary`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ card }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (res.status === 401) throw new UnauthenticatedError(`summary 返回 401`);
+  if (!res.ok) throw new Error(`summary 返回 ${res.status}`);
+  const body = (await res.json()) as { text?: unknown };
+  if (typeof body.text !== "string" || body.text === "") throw new Error("summary 没有给出文案");
   return { text: body.text };
 }

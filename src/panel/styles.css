@@ -461,3 +461,44 @@ a.card-source:hover {
 .full-item-snapshot {
   font-variant-numeric: tabular-nums;
 }
+
+/* 「AI 提炼」（#20）：一个按钮加一句边界说明；摘要就地长在标题下方。 */
+.ai-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(10px * var(--site-space, 1));
+  margin: 0 0 calc(10px * var(--site-space, 1));
+}
+
+.ai-button {
+  padding: calc(2px * var(--site-space, 1)) calc(10px * var(--site-space, 1));
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--site-surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: calc(13px * var(--site-type, 1));
+  cursor: pointer;
+}
+
+.ai-button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.ai-note {
+  color: var(--muted);
+  font-size: calc(12px * var(--site-type, 1));
+}
+
+.card-summary {
+  margin: calc(6px * var(--site-space, 1)) 0 0;
+  color: var(--ink);
+  font-size: calc(13px * var(--site-type, 1));
+  line-height: 1.5;
+}
+
+.card-summary--loading {
+  color: var(--muted);
+}
