@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildTodayList } from "../src/core/today-list";
-import type { Scope } from "../src/core/provider";
+import type { Scope, Task } from "../src/core/provider";
 import { fakeHttp } from "../src/fakes/fakeHttp";
 import { createGithubLikeProvider } from "../src/fakes/githubLikeProvider";
 import { createGiteeLikeProvider } from "../src/fakes/giteeLikeProvider";
@@ -86,5 +86,29 @@ describe("seam 1 · 各家的标签形状在 provider 里消化", () => {
     });
 
     expect(list.entries[0]?.task.labels).toEqual(["backend", "bug"]);
+  });
+});
+
+describe("seam 1 · 标签跨轮不丢（#36）", () => {
+  it("按 id 没取回的条目带着上一轮的标签留在清单里", async () => {
+    const previous: Task = {
+      id: "github:jing-gou/triage360#1041",
+      providerId: "github",
+      title: "修复登录回调",
+      url: "https://github.com/jing-gou/triage360/issues/1041",
+      state: "open",
+      labels: ["bug"],
+      updatedAt: "2026-11-16T08:20:00.000Z",
+    };
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider()],
+      http: fakeHttp({ github: { view: [], byId: [] } }),
+      now: clock,
+      scope,
+      previous: [previous],
+    });
+
+    expect(list.entries[0]?.task.labels).toEqual(["bug"]);
   });
 });
