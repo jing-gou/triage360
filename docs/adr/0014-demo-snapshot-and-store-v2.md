@@ -1,0 +1,11 @@
+# ADR-0014 · 演示快照与账本 v2：刷新落点、锁与登录名查找
+
+**决策**：演示租户（#15）的取数落在服务端进程里：`DEMO_LOGIN` 命中的账本记录由 `setInterval`（`DEMO_REFRESH_MINUTES`，下限 1 分钟、上限 `2^31-1` 毫秒，写错退回 15 分钟）定时刷新，一次刷新的合并（in-flight 复用）就是这把锁；结果写成 `<DATA_DIR>/demo.json`（`{ generatedAt, items, gitee, connected }`，0600，临时文件 + rename），并由 `GET /api/demo/items` 公开只读、`Cache-Control: no-store` 返回。`POST /api/demo/reset`（Bearer = `DEMO_RESET_TOKEN`）立刻重跑同一条刷新路径，不另开分支。上游故障保留上一份好快照，不拿空清单覆盖；GitHub 与 Gitee 各自成对存 `items` / 连接态，一家掉线不抹掉另一家。
+
+账本形状推进到 `version: 2`：`Tenant` 增加 `githubLogin` / `giteeLogin` 与 `gitee`（加密的 access / refresh token、`expiresAt`、`lastRefreshAt`）。`version: 1` 仍可读；加密（AES-256-GCM）、`idHash` 查找、`lastSeenAt` 续期与 30 天清除全部沿用 ADR-0011。`login` 只是展示名（先连哪家就是哪家），无会话的演示刷新只按 `githubLogin` 找回账本，Gitee 的轮换写回只按 `giteeLogin` 定位；两条查找都不回落到展示名。真实租户一律按会话标识定位。演示定时器与 `/api/items` 共用一个 `Upstream` 实例，Gitee 的 in-flight 表按 `giteeLogin`（授权归属）而不是按会话作键，因此同一份授权不会因为一个走定时器、一个走会话而各换一次 token；被合并的等待者拿回结果后重读一次自己的账本副本，`connected` 与下一轮取数都对得上。
+
+**原因**：部署形态是单 systemd 进程（Q26-B、#39），进程内定时器已经满足「24 小时无人访问仍更新」；同一份内存 promise 同时接住定时器与维护者重置，不会叠加两次取数。快照落盘让进程重启后首次访客立刻有数据，也让刷新失败时上一份仍可用。展示名不是身份：一个租户可能先连 Gitee 再连 GitHub，若按 `login` 找演示账号，会把同名但未连 GitHub 的账当成演示租户，从而公开别人的清单——所以演示查找只认 GitHub 登录名，Gitee 写回同理只认 Gitee 登录名。Gitee 的 refresh token 与 access token 成对轮换，两个并发请求各换一次时，后失败的一次会把刚写好的新对覆盖回旧的；按授权归属把 Gitee 取数合并成一份，再原子写回整对。演示账号即使被维护者用会话打开，`/api/items` 也把它当演示租户（请求路径不续期），续期只归定时器。
+
+**被放弃的选项**：cron + 分布式锁（DECISIONS §0.4 的原措辞）——单实例下 cron 要多一个 unit、分布式锁没有第二个持有人可排除，收益为零；多实例部署时须先把快照写者收敛成单一所有者，这条 ADR 的锁不跨进程。把演示数据编进前端或样例 provider（#15 明确禁止：真连一演示就露）。按 `login` 复用同一字段当身份（展示名可变、可同名）。刷新失败时输出空清单并依赖角标解释（首次访客会先看到空页，违背落地即演示）。给 `demo.json` 做独立加密（它只有标题与元数据，不含凭据；明文元数据与 `store.json` 的密文边界见 ADR-0011）。
+
+**已知缺口，刻意留着**：快照的「来自 HH:MM 快照」就地水印属于 #16，本 ADR 只保证 `generatedAt` 随快照落盘；面板目前用它当排序基准，旧快照与实时数据的视觉区分在 #16 关闭。演示账号的 12 条源站数据（含 1 个私有仓库、2 条已完成）是账号侧前提，代码只负责把它们拉回来；源站没建好时刷新照常跑，只是内容不全。`/api/demo/items` 公开意味着演示账号清单对任何访客可见——这正是代持演示账号的设计（专用账号、不含个人工作数据），自陈屏在连接自己的账号前说明这一点。

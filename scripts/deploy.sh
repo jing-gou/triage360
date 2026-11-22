@@ -28,6 +28,10 @@ set +a
   "${FRONTEND_URL:?deploy.env 缺 FRONTEND_URL}" \
   "${GITHUB_CLIENT_ID:?deploy.env 缺 GITHUB_CLIENT_ID}" \
   "${GITHUB_CLIENT_SECRET:?deploy.env 缺 GITHUB_CLIENT_SECRET}"
+# 写一半不是「没配 Gitee」，而是配错了；脚本替人接住，别让它悄悄少写两行。
+if { [ -n "${GITEE_CLIENT_ID:-}" ] && [ -z "${GITEE_CLIENT_SECRET:-}" ]; } || { [ -z "${GITEE_CLIENT_ID:-}" ] && [ -n "${GITEE_CLIENT_SECRET:-}" ]; }; then
+  die "GITEE_CLIENT_ID 与 GITEE_CLIENT_SECRET 必须成对"
+fi
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8787}
 # 加密存储与密钥的落点（#13）：密钥文件 store.key 与数据同目录，都只有服务账号能读。
@@ -76,7 +80,7 @@ log "npm ci + build:server"
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" ci
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" run build:server
 
-# 4. 运行环境：七键、root 600；配了 DEEPSEEK_API_KEY 就多一行（#8）。内容没变就不碰文件。
+# 4. 运行环境：基础键 + 可选 Gitee / 演示租户 / DeepSeek 行；root 600，内容没变就不碰文件。
 ENV_FILE=$APP_DIR/.env
 tmp_env=$(mktemp)
 trap 'rm -f "$tmp_env"' EXIT
@@ -89,6 +93,19 @@ umask 077
   printf 'DATA_DIR=%s\n' "$DATA_DIR"
   printf 'GITHUB_CLIENT_ID=%s\n' "$GITHUB_CLIENT_ID"
   printf 'GITHUB_CLIENT_SECRET=%s\n' "$GITHUB_CLIENT_SECRET"
+  if [ -n "${GITEE_CLIENT_ID:-}" ] && [ -n "${GITEE_CLIENT_SECRET:-}" ]; then
+    printf 'GITEE_CLIENT_ID=%s\n' "$GITEE_CLIENT_ID"
+    printf 'GITEE_CLIENT_SECRET=%s\n' "$GITEE_CLIENT_SECRET"
+  fi
+  if [ -n "${DEMO_LOGIN:-}" ]; then
+    printf 'DEMO_LOGIN=%s\n' "$DEMO_LOGIN"
+    if [ -n "${DEMO_REFRESH_MINUTES:-}" ]; then
+      printf 'DEMO_REFRESH_MINUTES=%s\n' "$DEMO_REFRESH_MINUTES"
+    fi
+    if [ -n "${DEMO_RESET_TOKEN:-}" ]; then
+      printf 'DEMO_RESET_TOKEN=%s\n' "$DEMO_RESET_TOKEN"
+    fi
+  fi
   if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY"
   fi

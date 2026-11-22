@@ -13,8 +13,21 @@ export interface ServerConfig {
   /** 加密账本与密钥的目录；密钥与账本都只住这里，永不进仓库（#13）。 */
   dataDir: string;
   github: { clientId: string; clientSecret: string };
+  /** Gitee 应用；缺一对就整条 Gitee 链路不启用（面板仍可用 GitHub 与样例）。 */
+  gitee: { clientId: string; clientSecret: string } | null;
+  /** 演示代持租户：给了 `DEMO_LOGIN` 才启用公开演示取数与定时刷新。 */
+  demo: DemoConfig | null;
   /** 「为什么是这几条」的措辞通道（#8）；钥匙可以为空：空即未配置，接口回 503，面板回落规则理由。 */
   deepseek: DeepseekConfig;
+}
+
+export interface DemoConfig {
+  /** 演示租户的登录名（GitHub 侧）；定时刷新按它找回账本记录。 */
+  login: string;
+  /** 定时刷新间隔；下限 1 分钟，避免配置成 0 后空转。 */
+  refreshMs: number;
+  /** 维护者重置入口的 Bearer；空 = 不开放该入口。 */
+  resetToken: string | null;
 }
 
 export interface DeepseekConfig {
@@ -36,6 +49,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
       clientId: required(env, "GITHUB_CLIENT_ID"),
       clientSecret: required(env, "GITHUB_CLIENT_SECRET"),
     },
+    gitee: optionalPair(env, "GITEE_CLIENT_ID", "GITEE_CLIENT_SECRET"),
+    demo:
+      env.DEMO_LOGIN === undefined || env.DEMO_LOGIN === ""
+        ? null
+        : {
+            login: env.DEMO_LOGIN,
+            refreshMs: demoRefreshMs(env.DEMO_REFRESH_MINUTES),
+            resetToken: env.DEMO_RESET_TOKEN === undefined || env.DEMO_RESET_TOKEN === "" ? null : env.DEMO_RESET_TOKEN,
+          },
     // 钥匙缺失不拦住启动：只有这一条链路会 503，其余面板照常工作。
     deepseek: {
       apiKey: env.DEEPSEEK_API_KEY ?? "",
@@ -45,10 +67,31 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
   };
 }
 
+function optionalPair(
+  env: NodeJS.ProcessEnv,
+  idName: string,
+  secretName: string,
+): { clientId: string; clientSecret: string } | null {
+  const clientId = env[idName];
+  const clientSecret = env[secretName];
+  const hasId = clientId !== undefined && clientId !== "";
+  const hasSecret = clientSecret !== undefined && clientSecret !== "";
+  if (!hasId && !hasSecret) return null;
+  if (!hasId || !hasSecret) throw new Error(`${idName} 与 ${secretName} 必须同时配置`);
+  return { clientId, clientSecret };
+}
+
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (value === undefined || value === "") throw new Error(`缺少环境变量 ${name}`);
   return value;
+}
+
+/** 写错、写成 0 或超出定时器上限就退回 15 分钟；`NaN` 与超界值交给 setInterval 都会变成 1ms 的空转。 */
+function demoRefreshMs(raw: string | undefined): number {
+  const minutes = Number(raw ?? 15);
+  const ms = Number.isFinite(minutes) && minutes > 0 ? Math.max(60_000, minutes * 60_000) : 15 * 60_000;
+  return Math.min(ms, 2_147_483_647);
 }
 
 function trimSlash(url: string): string {

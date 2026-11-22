@@ -3,11 +3,13 @@ import type { Provider, Scope, Tier } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
 import { buildTodayList, type ListEntry, type RuleId, type TodayList } from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
+import { createGiteeProvider } from "../providers/gitee";
 import { createGithubProvider } from "../providers/github";
 import {
   API_BASE,
   adoptSessionFromUrl,
-  fetchGithubItems,
+  fetchDemoItems,
+  fetchItems,
   forgetSession,
   requestAuthUrl,
   requestReason,
@@ -16,6 +18,7 @@ import {
   type GithubAuth,
   type TierGrant,
 } from "./api";
+import { createSnapshotHttp } from "./snapshot-http";
 import type { ReasonCard } from "../core/reason-card";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { clearLocalRecords, hasLocalRecords } from "./local-records";
@@ -24,7 +27,7 @@ import { hasSeenOrderNotice, loadManualOrder, markOrderNoticeSeen, saveManualOrd
 const scope: Scope = { assignee: "me" };
 const sampleProviders: Provider[] = createSampleProviders();
 /** 真接入的平台；样例里 id 相同的让位，弹层里同一平台只出现一次。 */
-const wiredProviders: Provider[] = [createGithubProvider()];
+const wiredProviders: Provider[] = [createGithubProvider(), createGiteeProvider()];
 /** 授权档位弹层的平台清单：真接入的在前，其余用样例 provider 的粒度说明。 */
 const authProviders: Provider[] = [
   ...wiredProviders,
@@ -32,9 +35,13 @@ const authProviders: Provider[] = [
 ];
 const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
+/** 这一轮服务端手里还握着哪几家的授权；`null` = 这一屏没走真实链路。 */
+type Connected = { github: boolean; gitee: boolean };
+
 /**
  * 来源在界面上的真实程度（`docs/PRD.md` 的真实程度表）。默认四家都是字面量数据，
- * 所以都标样例数据；接上 GitHub 会话之后这一家不再带样例标记（T09），其余三家等 T15 / T17 / T19。
+ * 所以都标样例数据；某一家真的连上之后这一家才不带样例标记（GitHub T09、Gitee #17），
+ * 其余没连的仍要带限定词——「面板连着后端」不等于「这一家是真实的」。
  */
 const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
   github: { label: "GitHub", sample: "样例数据" },
@@ -43,10 +50,10 @@ const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
   feishu: { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
 };
 
-/** 接上真实会话时真接入的平台不再标样例；其余几家原样保留。 */
-function sourceLabel(providerId: string, live: boolean): { label: string; sample?: string } {
+/** 这一家真的连上了才不标样例；其余几家原样保留限定词。 */
+function sourceLabel(providerId: string, connected: Connected | null): { label: string; sample?: string } {
   const base = SOURCE_LABELS[providerId] ?? { label: providerId };
-  return live && wiredProviders.some((one) => one.id === providerId) ? { label: base.label } : base;
+  return connected !== null && connected[providerId as keyof Connected] === true ? { label: base.label } : base;
 }
 
 /**
@@ -86,8 +93,16 @@ export function App() {
   const [list, setList] = useState<TodayList | null>(null);
   const [notice, setNotice] = useState<OrderNotice | null>(null);
   const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
-  const [live, setLive] = useState(false);
+  /** 这一屏走的是真实链路：记录服务端还握着哪几家的授权；`null` = 样例屏。 */
+  const [connected, setConnected] = useState<Connected | null>(null);
+  /** 这一屏是公开演示快照：数据来自演示账号的真实取数，但没有访客自己的授权。 */
+  const [demo, setDemo] = useState(false);
+  const live = connected !== null && !demo;
   const [reconnect, setReconnect] = useState(false);
+  /** 唯一接线的 uniform 档（Gitee）这一轮没取到数据时的标注；常态为 `null`，界面按 kind 取用。 */
+  const [uniformNote, setUniformNote] = useState<string | null>(null);
+  /** 不可达的原始原因（403 / User-Agent 等）：角标只留一句短话，细节放进档位弹层。 */
+  const [uniformDetail, setUniformDetail] = useState<string | null>(null);
   /** 浏览器手里还握着一枚会话标识：即便这一屏没连上，撤销入口也得在——否则旧租户没人能清。 */
   const [hasSession, setHasSession] = useState(false);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -116,11 +131,16 @@ export function App() {
       if (session !== null) {
         setHasSession(true);
         try {
-          const payload = await fetchGithubItems(API_BASE, session);
+          const payload = await fetchItems(API_BASE, session);
+          // 只构建这一轮还连着的家：Gitee 没连就不拿样例顶替（那会和「已连上」混在一起），
+          // 取数失败的那一家由角标单独说明，不拖白另一家。
+          const providers: Provider[] = [];
+          if (payload.connected.github) providers.push(createGithubProvider());
+          if (payload.connected.gitee) providers.push(createGiteeProvider());
           const next = await buildTodayList({
-            providers: wiredProviders,
+            providers,
             // 条目已经从服务端取回，这一次取数不再出发请求；归一与排序仍在本机走 seam 1。
-            http: async () => ({ status: 200, headers: {}, body: { items: payload.items } }),
+            http: createSnapshotHttp(payload.items, payload.gitee.items),
             now: () => new Date(),
             scope: { assignee: payload.login },
             zoneOffsetMinutes,
@@ -131,7 +151,18 @@ export function App() {
           if (!alive) return;
           setList(next);
           setAuth(payload.auth);
-          setLive(true);
+          setConnected(payload.connected);
+          setDemo(false);
+          setUniformNote(
+            payload.gitee.status === "reauth"
+              ? "Gitee 授权已失效"
+              : payload.gitee.status === "unavailable"
+                ? "Gitee 暂不可达"
+                : null,
+          );
+          setUniformDetail(
+            payload.gitee.status === "unavailable" ? (payload.gitee.detail ?? "上游没有给出原因。") : null,
+          );
           setReconnect(false);
           return;
         } catch (error) {
@@ -142,8 +173,40 @@ export function App() {
           }
           if (alive) {
             setAuth(null);
+            setConnected(null);
+            setUniformNote(null);
+            setUniformDetail(null);
             setReconnect(true);
           }
+        }
+      }
+      // 没有会话（或会话已失效）：先看公开演示快照——首次访客落地即真实数据（#15）。
+      if (API_BASE !== "") {
+        try {
+          const snapshot = await fetchDemoItems(API_BASE);
+          const providers: Provider[] = [];
+          if (snapshot.connected.github) providers.push(createGithubProvider());
+          if (snapshot.connected.gitee) providers.push(createGiteeProvider());
+          const next = await buildTodayList({
+            providers,
+            http: createSnapshotHttp(snapshot.items, snapshot.gitee),
+            // 排序基准取快照时刻：访客看到的是那一轮取数的切片，不是「刚刚」。
+            now: () => new Date(snapshot.generatedAt),
+            scope,
+            zoneOffsetMinutes,
+            sameEvent: demoSameEvent,
+            ...local,
+          });
+          if (!alive) return;
+          setList(next);
+          setConnected(snapshot.connected);
+          setDemo(true);
+          setAuth(null);
+          setUniformNote(null);
+          setUniformDetail(null);
+          return;
+        } catch {
+          // 演示快照也不可用就退回样例；这一屏仍不空白。
         }
       }
       const next = await buildTodayList({
@@ -158,7 +221,10 @@ export function App() {
       });
       if (!alive) return;
       setList(next);
-      setLive(false);
+      setConnected(null);
+      setDemo(false);
+      setUniformNote(null);
+      setUniformDetail(null);
     }
 
     load();
@@ -270,7 +336,23 @@ export function App() {
     }
     setDialogBusy(true);
     try {
-      window.location.href = await requestAuthUrl(API_BASE, session, tier);
+      window.location.href = await requestAuthUrl(API_BASE, session, { provider: "github", tier });
+    } catch {
+      setDialogBusy(false);
+      setDialogError("没有发起授权：会话已失效或服务端不可达，稍后再试。");
+    }
+  }
+
+  /** Gitee 没有档位：一次授权一枚 token，过期后同样从这里重新走一遍。 */
+  async function authorizeGitee(): Promise<void> {
+    const session = adoptSessionFromUrl();
+    if (session === null) {
+      setDialogError("这台浏览器里没有会话记录，先连接再来。");
+      return;
+    }
+    setDialogBusy(true);
+    try {
+      window.location.href = await requestAuthUrl(API_BASE, session, { provider: "gitee" });
     } catch {
       setDialogBusy(false);
       setDialogError("没有发起授权：会话已失效或服务端不可达，稍后再试。");
@@ -295,6 +377,8 @@ export function App() {
   // 本轮取数里被 401 摘掉的档更急：私有条目已经少了几条，角标先说这个。
   const authNote =
     auth === null ? null : auth.dropped.length > 0 ? "授权已失效" : scopeGap ? "实际授权已缩小" : null;
+  // 两家的问题都收进同一个入口：常态安静，出问题时角标说得出是哪一家。
+  const tierNote = [authNote, uniformNote].filter((one): one is string => one !== null).join(" · ") || null;
 
   return (
     <main className="panel">
@@ -308,12 +392,12 @@ export function App() {
           const otherSources =
             mergedFrom === undefined
               ? []
-              : [...new Set(mergedFrom.slice(1).map((one) => sourceLabel(one.providerId, live).label))];
+              : [...new Set(mergedFrom.slice(1).map((one) => sourceLabel(one.providerId, connected).label))];
           const whyState = why[task.id];
           const samples = [
             ...new Set(
               sources
-                .map((one) => sourceLabel(one.providerId, live).sample)
+                .map((one) => sourceLabel(one.providerId, connected).sample)
                 .filter((one) => one !== undefined),
             ),
           ];
@@ -354,7 +438,7 @@ export function App() {
               </a>
               <p className="card-meta">
                 {sources.map((one) => {
-                  const source = sourceLabel(one.providerId, live);
+                  const source = sourceLabel(one.providerId, connected);
                   const label = source.label;
                   return mergedFrom === undefined ? (
                     <span className="card-source" key={one.id}>
@@ -410,17 +494,26 @@ export function App() {
         失效时说「重新连接」而不是把整屏换成错误信息。
       */}
       <p className="corner">
-        {(live ? wiredProviders : sampleProviders)
+        {(connected === null
+          ? sampleProviders
+          : wiredProviders.filter((provider) => connected[provider.id as keyof Connected])
+        )
           .map((provider) => {
-            const source = sourceLabel(provider.id, live);
+            const source = sourceLabel(provider.id, connected);
             return source.sample ? `${source.label} 样例` : source.label;
           })
           .join(" · ")}
         {" · "}
+        {demo && (
+          <>
+            演示账号
+            {" · "}
+          </>
+        )}
         {API_BASE !== "" && (!live || reconnect) && (
           <>
             <button className="corner-link" onClick={() => openDialog("consent")} type="button">
-              {reconnect ? "连接已失效 · 重新连接 GitHub" : "连接 GitHub"}
+              {reconnect ? "连接已失效 · 重新连接" : demo ? "连接自己的账号" : "连接 GitHub / Gitee"}
             </button>
             {" · "}
           </>
@@ -436,7 +529,7 @@ export function App() {
         {!reconnect && live && (
           <>
             <button className="corner-link" onClick={() => openDialog("tiers")} type="button">
-              {authNote === null ? "授权档位" : `授权档位 · ${authNote}`}
+              {tierNote === null ? "授权档位" : `授权档位 · ${tierNote}`}
             </button>
             {" · "}
           </>
@@ -481,13 +574,14 @@ export function App() {
         不做常驻入口、不加说明行——它只在伸手连接的那一刻占住一屏。
       */}
       {dialog === "consent" && (
-        <Modal title="连接 GitHub 之前" onDismiss={() => setDialog(null)}>
+        <Modal title="连接之前" onDismiss={() => setDialog(null)}>
           <p className="notice-body">
-            同意后跳到 GitHub 的授权页面。服务端会存：你的 GitHub 登录名、加密后的各档 access token、这次授权是哪一档、GitHub 实际授予的 scope、以及这条记录的创建与最近访问时间。
-            连上之后，右下角的「授权档位」可以再单独授权私有仓库——那是第二次授权，两个 token 分开存。
+            同意后跳到所选平台的授权页面：GitHub 或 Gitee。服务端会存：两边各自的登录名、加密后的 access token、GitHub 实际授予的 scope、Gitee 的 refresh token 与过期时刻，以及这条记录的创建与最近访问时间。
+            GitHub 连上之后，右下角的「授权档位」可以再单独授权私有仓库——那是第二次授权，两个 token 分开存。
           </p>
           <p className="notice-body">
-            token 只用来读指派给你、还没关闭的 issue 的标题、状态、更新时间与截止时间。正文、评论、diff、代码永不入库。
+            两家的 token 都只用来读指派给你、还没关闭的 issue 的标题、状态、更新时间与截止时间。Gitee 的 access token
+            一天过期，过期前后服务端会拿 refresh token 自动续期，不会让清单静默变空。正文、评论、diff、代码永不入库。
           </p>
           <p className="notice-body">
             点卡片上的「为什么」时，服务端只把这张卡的标题与排序元数据（档位、截止、更新时间、学习信号）发给 DeepSeek
@@ -500,7 +594,7 @@ export function App() {
             token 加密落盘：数据库文件泄露不导致凭据泄露。但这挡不住服务器被完全控制——进程运行时手里有密钥。
           </p>
           <p className="notice-body">
-            怎么清：右下角的「撤销授权」会在服务端物理删除两档令牌和这条记录，删除后当场验证；连续
+            怎么清：右下角的「撤销授权」会在服务端物理删除两家令牌和这条记录，删除后当场验证；连续
             30 天未访问也会自动清除。
           </p>
           <p className="notice-body">
@@ -510,6 +604,15 @@ export function App() {
           <div className="notice-actions">
             <button className="notice-secondary" onClick={() => setDialog(null)} type="button">
               先不连接
+            </button>
+            <button
+              className="notice-secondary"
+              onClick={() => {
+                window.location.href = `${API_BASE}/auth/gitee`;
+              }}
+              type="button"
+            >
+              同意并连接 Gitee
             </button>
             <button
               autoFocus
@@ -527,7 +630,7 @@ export function App() {
       {dialog === "revoke" && (
         <Modal title="撤销授权" onDismiss={() => { if (!dialogBusy) setDialog(null); }}>
           <p className="notice-body">
-            会在服务端物理删除这条记录：加密的令牌（两档各一枚）、GitHub 登录名与这条租户的全部数据，删除后当场验证。之后面板回到样例清单，随时可以重新连接。
+            会在服务端物理删除这条记录：加密的令牌（GitHub 各档各一枚；Gitee 的 access 与 refresh 各一枚）、两家的登录名与这条租户的全部数据，删除后当场验证。之后面板回到样例清单，随时可以重新连接。
           </p>
           <p className="notice-body">
             只关掉私有仓库、保留公开档：到 GitHub 的已授权应用页把这一档的 scope 调小，回来刷新即可——面板会如实标出差异。
@@ -574,14 +677,45 @@ export function App() {
           </p>
           {authProviders.map((provider) => {
             const descriptor = provider.scopeDescriptor(scope);
-            const source = sourceLabel(provider.id, live);
+            const source = sourceLabel(provider.id, connected);
             // 弹层同样受真实程度表约束：样例平台的档位说明也要带上限定词。
             const providerLabel = source.sample === undefined ? source.label : `${source.label} 样例`;
             if (descriptor.auth.kind === "uniform") {
+              // 没有档位的平台（Gitee）也在这里接：一次授权一枚令牌，续期失败时从这里重来。
+              const wired = wiredProviders.some((one) => one.id === provider.id);
+              // 连接态只对真实接线的 uniform 档成立；Jira / 飞书样例不跟着 Gitee 的会话说「已连接」。
+              const uniformConnected = wired && connected?.gitee === true;
               return (
-                <p className="notice-body" key={provider.id}>
-                  <span className="tier-name">{providerLabel}</span> · {descriptor.auth.note}
-                </p>
+                <div className="tier-group" key={provider.id}>
+                  <p className="tier-group-title">{providerLabel}</p>
+                  <div className="tier-row">
+                    <div className="tier-body">
+                      <span className="tier-name">一次授权</span>
+                      <span className="tier-scope">
+                        {wired ? `${uniformConnected ? "已连接" : "未连接"} · ` : ""}
+                        {descriptor.auth.note}
+                      </span>
+                      {wired && uniformNote !== null && (
+                        <span className="tier-warn">
+                          {uniformNote}
+                          {uniformDetail === null
+                            ? "：access token 一天过期，自动续期没成功后需要重新授权。"
+                            : `：${uniformDetail}`}
+                        </span>
+                      )}
+                    </div>
+                    {API_BASE !== "" && wired && (
+                      <button
+                        className="notice-secondary"
+                        disabled={dialogBusy}
+                        onClick={() => void authorizeGitee()}
+                        type="button"
+                      >
+                        {uniformConnected ? "重新授权" : "授权"}
+                      </button>
+                    )}
+                  </div>
+                </div>
               );
             }
             return (
