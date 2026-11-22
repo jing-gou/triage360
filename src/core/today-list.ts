@@ -292,12 +292,14 @@ async function buildOneSafely(
 ): Promise<ProviderBatch> {
   const own = previous.filter((task) => task.providerId === provider.id);
   try {
-    return {
-      providerId: provider.id,
-      tasks: await buildOne(provider, http, scope, previous),
-      snapshotAt: new Map(),
-      failed: false,
-    };
+    const fresh = await buildOne(provider, http, scope, previous);
+    const snapshotAt = new Map<string, string>();
+    // 这一轮取到了数，不代表每张旧卡都核过：按 id 没确认的那些仍是上一次成功取数的样子。
+    for (const id of fresh.unconfirmed) {
+      const known = previousSnapshotAt?.[id] ?? previousGeneratedAt;
+      if (known !== undefined) snapshotAt.set(id, known);
+    }
+    return { providerId: provider.id, tasks: fresh.tasks, snapshotAt, failed: false };
   } catch {
     const snapshotAt = new Map<string, string>();
     for (const task of own) {
@@ -313,7 +315,7 @@ async function buildOne(
   http: Http,
   scope: Scope,
   previous: readonly Task[],
-): Promise<Task[]> {
+): Promise<{ tasks: Task[]; unconfirmed: ReadonlySet<string> }> {
   // 空数组 = 这个平台任何状态都不算完成/删除，条目一律留在清单里。
   const done = new Set(provider.doneStates());
   const deleted = new Set(provider.deletedStates());
@@ -325,20 +327,28 @@ async function buildOne(
   const unseen = previous.filter(
     (task) => task.providerId === provider.id && !seen.some((s) => s.id === task.id),
   );
-  const carried = unseen.length === 0 ? [] : await carryOver(provider, http, unseen);
+  const carried =
+    unseen.length === 0 ? { tasks: [], unconfirmed: new Set<string>() } : await carryOver(provider, http, unseen);
 
-  return [...seen, ...carried].filter(stillOpen);
+  return { tasks: [...seen, ...carried.tasks].filter(stillOpen), unconfirmed: carried.unconfirmed };
 }
 
 /**
  * 上一轮有、本轮视图里没有的条目：一次批量取回分辨「已被删除」与「这次没返回」。
  * 批量没返回的 id 视为跳过——保留上一轮那条，而不是当成已删除。
  */
-async function carryOver(provider: Provider, http: Http, unseen: readonly Task[]): Promise<Task[]> {
+async function carryOver(
+  provider: Provider,
+  http: Http,
+  unseen: readonly Task[],
+): Promise<{ tasks: Task[]; unconfirmed: ReadonlySet<string> }> {
   const refreshed = new Map(
     (await provider.getByIds(unseen.map((task) => task.id), http))
       .map(provider.normalize)
       .map((task) => [task.id, task] as const),
   );
-  return unseen.map((task) => refreshed.get(task.id) ?? task);
+  return {
+    tasks: unseen.map((task) => refreshed.get(task.id) ?? task),
+    unconfirmed: new Set(unseen.filter((task) => !refreshed.has(task.id)).map((task) => task.id)),
+  };
 }

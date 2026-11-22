@@ -1,5 +1,5 @@
 import { decideCredentialAction, recordRefreshAttempt, rotateCredential, type CredentialRecord } from "../src/core/credentials";
-import type { Http, Provider, RawItem, Tier } from "../src/core/provider";
+import { providerIdOf, type Http, type Provider, type RawItem, type Tier } from "../src/core/provider";
 import { createGiteeProvider, GiteeUpstreamError } from "../src/providers/gitee";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
@@ -27,6 +27,8 @@ export interface GithubSnapshot {
   used: Tier | null;
   dropped: Tier[];
   detail?: string;
+  /** 403 且不是限流：权限不足的强信号，面板据此把故障说成「权限未授予」。 */
+  forbidden?: true;
 }
 
 export type GiteeSnapshot =
@@ -77,7 +79,7 @@ async function confirmPrevious(
   meta: (item: RawItem) => RawItem,
 ): Promise<RawItem[]> {
   const have = new Set(active.map((item) => provider.normalize(item).id));
-  const missing = ids.filter((id) => id.startsWith(`${provider.id}:`) && !have.has(id));
+  const missing = ids.filter((id) => providerIdOf(id) === provider.id && !have.has(id));
   if (missing.length === 0) return [];
   try {
     return (await provider.getByIds(missing, http)).map(meta);
@@ -152,6 +154,9 @@ export class Upstream {
           used: null,
           dropped,
           detail: error instanceof Error ? error.message : "GitHub 不可达",
+          ...(error instanceof GithubUpstreamError && error.status === 403 && !error.rateLimited
+            ? { forbidden: true as const }
+            : {}),
         };
       }
     }

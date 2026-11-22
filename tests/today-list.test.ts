@@ -433,6 +433,28 @@ describe("seam 1 · 一家失败不拖白整轮", () => {
     expect(stale?.snapshotAt).toBe(round1.generatedAt);
   });
 
+  it("provider 这一轮成功、但旧条目按 id 没确认时，也带上一次成功取数的水印", async () => {
+    const firstRound = fakeHttp({
+      github: { view: [issue(4003, "只剩一条旧卡", "open", "2026-11-16T08:00:00Z")] },
+    });
+    const round1 = await buildTodayList({ providers: [github], http: firstRound, now: clock, scope });
+
+    // 第二轮活跃视图没返回它，按 id 补取也没回来：条目要留下，但不能假装它是这一轮的新鲜数据。
+    const secondRound = fakeHttp({ github: { view: [], byId: [] } });
+    const round2 = await buildTodayList({
+      providers: [github],
+      http: secondRound,
+      now: () => new Date("2026-11-17T10:00:00+08:00"),
+      scope,
+      previous: round1.entries.map((entry) => entry.task),
+      previousGeneratedAt: round1.generatedAt,
+    });
+
+    expect(round2.failures).toEqual([]);
+    expect(round2.entries[0]?.task.title).toBe("只剩一条旧卡");
+    expect(round2.entries[0]?.snapshotAt).toBe(round1.generatedAt);
+  });
+
   it("连续失败时水印停在最后一次成功取数的时刻，不被后一轮的生成时间覆盖", async () => {
     const firstRound = fakeHttp({
       github: { view: [issue(4002, "GitHub 条目", "open", "2026-11-16T08:00:00Z")] },

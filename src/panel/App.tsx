@@ -74,38 +74,46 @@ function providersFrom(flags: Connected): Provider[] {
  * 授权失效的家也留在构建里：它这一轮取不到数，正好走失败分支，把上一轮卡片连同水印一起留下
  * （Q37「保留上次快照水印」）。只把「从没连过」的家排除在外。
  */
-function providersFromPayload(payload: ItemsPayload): Provider[] {
+function providersFromPayload(payload: ItemsPayload, expired: ReadonlySet<SnapshotFailure>): Provider[] {
   return providersFrom({
-    github: payload.github.status !== "none",
-    gitee: payload.gitee.status !== "none",
+    github: payload.github.status !== "none" || expired.has("github"),
+    gitee: payload.gitee.status !== "none" || expired.has("gitee"),
   });
 }
 
 /** `reauth` 与上游故障同走失败分支：前者卡片带水印留存，后者同样退回上一轮。 */
-function failuresFrom(payload: ItemsPayload): SnapshotFailure[] {
+function failuresFrom(payload: ItemsPayload, expired: ReadonlySet<SnapshotFailure>): SnapshotFailure[] {
   const failed: SnapshotFailure[] = [];
-  if (payload.github.status === "unavailable" || payload.github.status === "reauth") failed.push("github");
-  if (payload.gitee.status === "unavailable" || payload.gitee.status === "reauth") failed.push("gitee");
+  if (payload.github.status === "unavailable" || payload.github.status === "reauth" || expired.has("github")) {
+    failed.push("github");
+  }
+  if (payload.gitee.status === "unavailable" || payload.gitee.status === "reauth" || expired.has("gitee")) {
+    failed.push("gitee");
+  }
   return failed;
 }
 
-function problemsFrom(payload: ItemsPayload): ProviderProblem[] {
+function problemsFrom(
+  payload: ItemsPayload,
+  expired: ReadonlySet<SnapshotFailure>,
+  droppedTiers: ReadonlySet<Tier>,
+): ProviderProblem[] {
   const problems: ProviderProblem[] = [];
   const scopeMissing = Object.values(payload.auth.grants).some(
     (grant) => grant !== undefined && grant.missing.length > 0,
   );
-  if (payload.auth.dropped.length > 0) {
-    problems.push({ providerId: "github", kind: "reauth" });
-  } else if (payload.github.status === "reauth") {
+  // 授权失效不会因为服务端下一轮不再报 reauth 就自愈：在重新授权之前，角标一直给入口。
+  if (expired.has("github") || payload.github.status === "reauth" || droppedTiers.size > 0) {
     problems.push({ providerId: "github", kind: "reauth" });
   } else if (payload.github.status === "unavailable") {
     problems.push({
       providerId: "github",
-      kind: scopeMissing ? "scope" : "unavailable",
+      // 只有这一轮真的是 403 且非限流时才算权限问题；库存的 missing scope 不能替上游故障背锅。
+      kind: payload.github.forbidden === true && scopeMissing ? "scope" : "unavailable",
       ...(payload.github.detail === undefined ? {} : { detail: payload.github.detail }),
     });
   }
-  if (payload.gitee.status === "reauth") {
+  if (expired.has("gitee") || payload.gitee.status === "reauth") {
     problems.push({ providerId: "gitee", kind: "reauth" });
   } else if (payload.gitee.status === "unavailable") {
     problems.push({
@@ -307,6 +315,9 @@ export function App() {
     let previous: TodayList | null = null;
     /** 各 provider 最后一次成功取数的时刻：一家失败多轮时，水印停在那里不往后滚。 */
     const lastGoodAt = new Map<string, string>();
+    /** 已经报过授权失效的家/档：服务端下一轮不再报 reauth，也不等于授权自己恢复了。 */
+    const expired = new Set<SnapshotFailure>();
+    const droppedTiers = new Set<Tier>();
     let busy = false;
     // 「今日」按访客日历里的今天判：偏移由界面这一侧喂进来，构建器自己不读宿主时区（ADR-0005）。
     const zoneOffsetMinutes = -new Date().getTimezoneOffset();
@@ -320,10 +331,12 @@ export function App() {
       return records;
     }
 
-    /** 只有这一轮真的取到数的家才推进时刻；失败家保持原值，下一轮水印才停得住。 */
-    function rememberGood(list: TodayList, providers: readonly Provider[]): void {
+    /** 只有这一轮整家真的取到数的才推进时刻；失败家与被摘掉一档的家保持原值，水印才停得住。 */
+    function rememberGood(list: TodayList, providers: readonly Provider[], holdBack: ReadonlySet<string> = new Set()): void {
       for (const provider of providers) {
-        if (!list.failures.includes(provider.id)) lastGoodAt.set(provider.id, list.generatedAt);
+        if (!list.failures.includes(provider.id) && !holdBack.has(provider.id)) {
+          lastGoodAt.set(provider.id, list.generatedAt);
+        }
       }
     }
 
@@ -356,15 +369,28 @@ export function App() {
         return false;
       }
 
+      // 服务端这一轮重新报 ok，才说明那一家真的接回来了；否则授权失效要在角标上留到重新授权。
+      if (payload.github.status === "ok") expired.delete("github");
+      if (payload.github.status === "reauth") expired.add("github");
+      if (payload.gitee.status === "ok") expired.delete("gitee");
+      if (payload.gitee.status === "reauth") expired.add("gitee");
+      for (const tier of payload.auth.dropped) droppedTiers.add(tier);
+      for (const tier of [...droppedTiers]) {
+        if (payload.auth.grants[tier] !== undefined) droppedTiers.delete(tier);
+      }
+      // 某一档被摘掉但另一档还能用时，GitHub 整家不算「整轮成功」：最后成功时刻不前进，
+      // 那一档的旧卡才不会在下一轮被盖上更晚的水印。
+      if (payload.github.status === "none" && droppedTiers.size > 0) expired.add("github");
+
       const local = localRecords();
-      const providers = providersFromPayload(payload);
+      const providers = providersFromPayload(payload, expired);
       const next = await buildRound({
         providers,
         githubItems: payload.items,
         giteeItems: payload.gitee.items,
         githubPrevious: payload.github.previous,
         giteePrevious: payload.gitee.previous,
-        failed: failuresFrom(payload),
+        failed: failuresFrom(payload, expired),
         now: new Date(),
         scope: { assignee: payload.login },
         zoneOffsetMinutes,
@@ -373,13 +399,13 @@ export function App() {
         ...local,
       });
       if (!alive) return true;
-      rememberGood(next, providers);
+      rememberGood(next, providers, droppedTiers.size > 0 ? new Set(["github"]) : new Set());
       previous = next;
       setList(next);
       setAuth(payload.auth);
       setConnected(payload.connected);
       setDemo(false);
-      setProblems(problemsFrom(payload));
+      setProblems(problemsFrom(payload, expired, droppedTiers));
       setRefreshNote(null);
       setReconnect(false);
       return true;
@@ -466,6 +492,8 @@ export function App() {
           // 数据源换了，上一轮是访客自己的清单，不能带进公开演示屏——否则私人卡片会被当成演示数据留着。
           previous = null;
           lastGoodAt.clear();
+          expired.clear();
+          droppedTiers.clear();
           if (await runDemo(false)) {
             mode = "demo";
             setDataMode("demo");
@@ -665,9 +693,11 @@ export function App() {
   const tierNote = problems.some((problem) => problem.providerId === "github") ? null : authNote;
   const giteeProblem = problems.find((problem) => problem.providerId === "gitee");
   const connectedAny = connected !== null && Object.values(connected).some(Boolean);
-  // 会话没了、一家都没接上、或有授权已失效：空清单要说得像「去处理授权」，不能像「今天没事」。
+  // 会话没了、一家都没接上、或有授权问题：空清单要说得像「去处理授权」，不能像「今天没事」。
   const blockedEmpty =
-    reconnect || (connected !== null && !connectedAny) || problems.some((problem) => problem.kind === "reauth");
+    reconnect ||
+    (connected !== null && !connectedAny) ||
+    problems.some((problem) => problem.kind === "reauth" || problem.kind === "scope");
   const emptyMessage = blockedEmpty
     ? problems.some((problem) => problem.kind === "scope")
       ? "权限还没授予。按右下角重新授权后再刷新。"
@@ -873,7 +903,7 @@ export function App() {
             {" · "}
           </>
         )}
-        {!reconnect && (dataMode === "live" || dataMode === "demo") && (
+        {(dataMode === "live" || dataMode === "demo") && (
           <>
             <button className="corner-link" disabled={refreshing} onClick={() => refreshRef.current()} type="button">
               {refreshing ? "刷新中…" : "刷新"}

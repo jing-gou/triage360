@@ -110,13 +110,17 @@ export function tieredAuth(range: string, tiers: readonly TierChoice[]): ScopeDe
   return { range, auth: { kind: "tiered", tiers } };
 }
 
-/** 任务 id 的编码只在这两个函数里出现，其余地方不解析它。 */
+/** 任务 id 的编解码只在这三个函数里出现，其余地方不解析它。 */
 export function makeTaskId(providerId: string, remoteId: string | number): string {
   return `${providerId}:${remoteId}`;
 }
 
 export function remoteIdOf(taskId: string): string {
   return taskId.slice(taskId.indexOf(":") + 1);
+}
+
+export function providerIdOf(taskId: string): string {
+  return taskId.slice(0, taskId.indexOf(":"));
 }
 
 /** 截止时间写到了哪一层精度：只有日期，还是带时刻。 */

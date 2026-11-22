@@ -260,6 +260,7 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
       github: {
         status: github.status,
         ...(github.detail === undefined ? {} : { detail: github.detail }),
+        ...(github.forbidden === true ? { forbidden: true } : {}),
         previous: github.previous,
       },
       auth: {

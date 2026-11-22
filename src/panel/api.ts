@@ -66,7 +66,8 @@ export interface GiteeAuth extends ProviderStatus, PreviousRecords {
   items: unknown[];
 }
 
-export type GithubStatus = ProviderStatus & PreviousRecords;
+/** `forbidden` 只在这一轮真的是 403（且非限流）时出现，不能只看库存的 missing scope 猜。 */
+export type GithubStatus = ProviderStatus & PreviousRecords & { forbidden?: true };
 
 export interface ItemsPayload {
   /** GitHub 的原始条目；GitHub 未授权或这一轮取数失败时为空数组。 */
