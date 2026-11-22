@@ -5,6 +5,7 @@
 
 import type { Tier } from "../core/provider";
 import type { ReasonCard } from "../core/reason-card";
+import type { SummaryCard } from "../core/summary-card";
 
 const SESSION_KEY = "triage360:session:v1";
 
@@ -156,12 +157,6 @@ export async function requestReason(base: string, session: string, card: ReasonC
 }
 
 /** 「AI 提炼」的一条摘要（#20）：服务端 6 秒超时，客户端留到 8 秒；失败就留空，下一次重问。 */
-export interface SummaryCard {
-  title: string;
-  labels: string[];
-  updatedAt: string;
-}
-
 export async function requestSummary(
   base: string,
   session: string,

@@ -365,10 +365,6 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
   }
 
   /**
-   * 单张卡的理由（#8）：同步等一句措辞，规则理由在浏览器那侧已经先渲染好，这里失败也不留空白。
-   * 只收元数据（`parseReasonCard` 逐字段白名单），日志只记结果、耗时与失败类型。
-   */
-  /**
    * 「AI 提炼」（#20）：一次一条，面板并发调用。鉴权与错误映射跟单卡理由同形，
    * 只是超时放宽到 6 秒（批量摘要不在 2 秒交互承诺里），摘要质量走人工判断。
    */
@@ -397,6 +393,10 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
     }
   }
 
+  /**
+   * 单张卡的理由（#8）：同步等一句措辞，规则理由在浏览器那侧已经先渲染好，这里失败也不留空白。
+   * 只收元数据（`parseReasonCard` 逐字段白名单），日志只记结果、耗时与失败类型。
+   */
   async function reasonWording(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const id = bearerOf(req);
     if (id === null || store.find(id) === undefined) return json(res, 401, { error: "unauthenticated" });

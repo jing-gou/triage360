@@ -334,10 +334,17 @@ function compareByRecency(a: { task: Task }, b: { task: Task }): number {
   return byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id);
 }
 
+/** 一条仍在源站的条目：任务、是否已完成、摘要通道要的标签名（#20）。 */
+interface PresentTask {
+  task: Task;
+  done: boolean;
+  labels: readonly string[];
+}
+
 interface ProviderBatch {
   providerId: string;
   /** 这一轮源站仍在的条目（含已完成，不含已删除）；未完成的卡片由这里筛出来。 */
-  present: { task: Task; done: boolean; labels: readonly string[] }[];
+  present: PresentTask[];
   /** 任务 id → 它来自哪一刻的快照；成功取数的家为空。 */
   snapshotAt: ReadonlyMap<string, string>;
   failed: boolean;
@@ -386,7 +393,7 @@ async function buildOne(
   http: Http,
   scope: Scope,
   previous: readonly Task[],
-): Promise<{ present: { task: Task; done: boolean; labels: readonly string[] }[]; unconfirmed: ReadonlySet<string> }> {
+): Promise<{ present: PresentTask[]; unconfirmed: ReadonlySet<string> }> {
   // 空数组 = 这个平台任何状态都不算完成/删除，条目一律留在清单里。
   const done = new Set(provider.doneStates());
   const deleted = new Set(provider.deletedStates());

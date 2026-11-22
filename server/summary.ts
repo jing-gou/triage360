@@ -1,3 +1,4 @@
+import type { SummaryCard } from "../src/core/summary-card";
 import type { DeepseekConfig } from "./config";
 
 /**
@@ -21,20 +22,13 @@ const SYSTEM_PROMPT = [
   "只输出那一句话：不要标题、列表、Markdown 或引号。",
 ].join("\n");
 
-export interface SummaryCard {
-  title: string;
-  labels: string[];
-  updatedAt: string;
-}
-
 /** 面板传来的 card 逐字段校验：只收标题、标签与更新时间，别的键一律丢掉。 */
 export function parseSummaryCard(value: unknown): SummaryCard | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
 
   const title = text(raw.title, 1, 500);
-  const updatedAt = text(raw.updatedAt, 1, 64);
-  if (title === null || updatedAt === null) return null;
+  if (title === null) return null;
 
   const labelsRaw = raw.labels;
   if (!Array.isArray(labelsRaw) || labelsRaw.length > MAX_LABELS) return null;
@@ -45,7 +39,7 @@ export function parseSummaryCard(value: unknown): SummaryCard | null {
     if (!labels.includes(name)) labels.push(name);
   }
 
-  return { title, labels, updatedAt };
+  return { title, labels };
 }
 
 export interface SummaryResult {

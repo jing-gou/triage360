@@ -674,7 +674,6 @@ export function App() {
             const { text } = await requestSummary(API_BASE, session, {
               title: chunk.task.title,
               labels: [...(chunk.labels ?? [])],
-              updatedAt: chunk.task.updatedAt,
             });
             rememberSummary(chunk.task, text);
             setSummaries((one) => ({ ...one, [key]: { status: "ready", text } }));
@@ -821,7 +820,10 @@ export function App() {
           <button className="ai-button" disabled={summarizing} onClick={() => void summarize()} type="button">
             {summarizing ? "正在提炼…" : "AI 提炼"}
           </button>
-          <span className="ai-note">AI 只看得到标题和标签，看不到正文和评论</span>
+          <span className="ai-note">
+            AI 只看得到标题和标签，看不到正文和评论
+            {list !== null && list.entries.length > 20 ? "；一次最多 20 张卡" : ""}
+          </span>
         </p>
       )}
       {fullViewOpen && hasFullView ? (

@@ -482,6 +482,15 @@ a.card-source:hover {
   cursor: pointer;
 }
 
+.ai-button:hover {
+  border-color: var(--ink);
+}
+
+.ai-button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
 .ai-button:disabled {
   color: var(--muted);
   cursor: default;

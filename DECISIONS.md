@@ -135,7 +135,7 @@ search()  getByIds()  normalize()  doneStates  deletedStates  pollIntervalMs  sc
 | Q41 | 演示数据集 | **C：精选 12 + 展开 83 双层** | |
 | Q42 | 异常可见性（Q40-B 之后） | **C：就地卡片水印**，无横幅 | |
 | Q43 | 两周排期与降级时点 | 全表采纳 | 见 §2 |
-| Q44 | provider 抽象 | **B：内部统一契约七法** | 兑现"飞书留位"那句话 |
+| Q44 | provider 抽象 | **B：内部统一契约七法**（#20 追加 `labels` 成八法） | 兑现"飞书留位"那句话 |
 | Q45 | token 静态加密 | **B：AES-256-GCM，密钥同机**，边界写进自陈屏 | |
 | Q46 | LLM 运行位置与延迟 | 自有服务器 + 自有 key；理由同步 2s / 摘要流式异步 | Cloud Agents 仅 30 分钟可选验证 |
 | Q47 | 对外演示脚本 | **显式推迟** | 唯一被有意搁置的分支 |

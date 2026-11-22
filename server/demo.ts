@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { labelNames, type RawItem } from "../src/core/provider";
+import type { Provider, RawItem } from "../src/core/provider";
 import { createGiteeProvider } from "../src/providers/gitee";
 import { createGithubProvider } from "../src/providers/github";
 import type { DemoConfig, ServerConfig } from "./config";
@@ -127,21 +127,25 @@ export class DemoRefresher {
    */
   private async fillSummaries(snapshot: DemoSnapshot): Promise<void> {
     if (this.config.deepseek.apiKey === "") return;
-    const all = [...snapshot.items, ...snapshot.gitee];
-    const keep = new Set(all.map(summaryKeyOf).filter((key): key is string => key !== null));
+    // 完成态的判定跟构建器同一处来：provider 的 doneStates，不在这里再抄一份平台字面量。
+    const githubProvider = createGithubProvider();
+    const giteeProvider = createGiteeProvider();
+    const keyed = (provider: Provider, raw: RawItem) => ({ raw, provider, key: summaryKeyOf(provider, raw) });
+    const github = snapshot.items.map((raw) => keyed(githubProvider, raw));
+    const gitee = snapshot.gitee.map((raw) => keyed(giteeProvider, raw));
+    const all = [...github, ...gitee];
+    const keep = new Set(all.map((one) => one.key).filter((key): key is string => key !== null));
     snapshot.summaries = Object.fromEntries(
       Object.entries(snapshot.summaries).filter(([key]) => keep.has(key)),
     );
 
-    // 完成态的判定跟构建器同一处来：provider 的 doneStates，不在这里再抄一份平台字面量。
-    const githubDone = new Set(createGithubProvider().doneStates());
-    const giteeDone = new Set(createGiteeProvider().doneStates());
+    const open = (one: { raw: RawItem }, provider: Provider): boolean =>
+      !new Set(provider.doneStates()).has(String(one.raw.state ?? ""));
     const todo = [
-      ...snapshot.items.filter((raw) => !githubDone.has(String(raw.state ?? ""))),
-      ...snapshot.gitee.filter((raw) => !giteeDone.has(String(raw.state ?? ""))),
+      ...github.filter((one) => open(one, githubProvider)),
+      ...gitee.filter((one) => open(one, giteeProvider)),
     ]
-      .map((raw) => ({ raw, key: summaryKeyOf(raw) }))
-      .filter((one): one is { raw: RawItem; key: string } => one.key !== null && snapshot.summaries[one.key] === undefined)
+      .filter((one): one is { raw: RawItem; provider: Provider; key: string } => one.key !== null && snapshot.summaries[one.key] === undefined)
       .sort((a, b) => String(b.raw.updated_at ?? "").localeCompare(String(a.raw.updated_at ?? "")))
       .slice(0, SUMMARY_LIMIT);
     if (todo.length === 0) return;
@@ -157,8 +161,7 @@ export class DemoRefresher {
         try {
           const { text } = await composeSummary(this.config.deepseek, {
             title: typeof item.raw.title === "string" ? item.raw.title : "",
-            labels: labelNames(item.raw.labels),
-            updatedAt: typeof item.raw.updated_at === "string" ? item.raw.updated_at : "",
+            labels: [...item.provider.labels(item.raw)],
           });
           snapshot.summaries[item.key] = text;
         } catch {
@@ -198,11 +201,13 @@ export class DemoRefresher {
   }
 }
 
-/** 演示摘要的键：URL 加归一化后的更新时间，与面板按任务（url + updatedAt）查表的口径一致。 */
-function summaryKeyOf(raw: RawItem): string | null {
-  const url = raw.html_url;
+/**
+ * 演示摘要的键：交给 provider 归一化后的任务 id（`provider:remoteId`）再拼归一化时间，
+ * 与面板的 `summaryKey` 完全同一个口径（provider + issue_id + updated_at）。
+ */
+function summaryKeyOf(provider: Provider, raw: RawItem): string | null {
   const updated = raw.updated_at;
-  if (typeof url !== "string" || typeof updated !== "string") return null;
+  if (typeof updated !== "string") return null;
   const at = new Date(updated);
-  return Number.isNaN(at.getTime()) ? null : `${url}@${at.toISOString()}`;
+  return Number.isNaN(at.getTime()) ? null : `${provider.normalize(raw).id}@${at.toISOString()}`;
 }

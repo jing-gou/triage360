@@ -4,6 +4,7 @@ import type { Scope } from "../src/core/provider";
 import { fakeHttp } from "../src/fakes/fakeHttp";
 import { createGithubLikeProvider } from "../src/fakes/githubLikeProvider";
 import { createGiteeLikeProvider } from "../src/fakes/giteeLikeProvider";
+import { createJiraLikeProvider } from "../src/fakes/jiraLikeProvider";
 
 const scope: Scope = { assignee: "me" };
 const clock = () => new Date("2026-11-17T09:00:00+08:00");
@@ -58,5 +59,33 @@ describe("seam 1 · 摘要通道要的标签（#20）", () => {
 
     expect(list.entries).toHaveLength(1);
     expect(list.entries[0]?.labels).toEqual(["bug", "backend"]);
+  });
+});
+
+describe("seam 1 · 各家的标签形状在 provider 里消化", () => {
+  it("Jira 的 fields.labels 也能带出来，与 GitHub/Gitee 的 [{ name }] 同一个输出", async () => {
+    const list = await buildTodayList({
+      providers: [createJiraLikeProvider()],
+      http: fakeHttp({
+        jira: {
+          view: [
+            {
+              id: "10041",
+              key: "TRI-41",
+              fields: {
+                summary: "排查 Gitee 403",
+                status: { name: "In Progress" },
+                updated: "2026-11-16T14:00:00.000+0800",
+                labels: ["backend", "bug"],
+              },
+            },
+          ],
+        },
+      }),
+      now: clock,
+      scope,
+    });
+
+    expect(list.entries[0]?.labels).toEqual(["backend", "bug"]);
   });
 });
