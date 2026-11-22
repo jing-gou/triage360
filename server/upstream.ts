@@ -67,8 +67,16 @@ export class Upstream {
     private readonly now: () => number,
   ) {}
 
+  /** 演示租户的判定只留这一处：入口无论是定时器还是会话，取数口径都必须相同。 */
+  private isDemoTenant(tenant: Tenant): boolean {
+    return this.config.demo !== null && tenant.githubLogin === this.config.demo.login;
+  }
+
   async github(tenant: Tenant, sessionId: string | null): Promise<GithubSnapshot | null> {
     const order: Tier[] = tenant.grants.private !== undefined ? ["private", "public"] : ["public"];
+    // 演示快照要核对 12 条精选（含 2 条已完成），所以演示账号连 closed 一起取；
+    // 访客自己的账号仍只取活跃视图，不把历史指派拉回来。
+    const includeDone = this.isDemoTenant(tenant);
     const dropped: Tier[] = [];
     for (const tier of order) {
       const grant = tenant.grants[tier];
@@ -80,7 +88,7 @@ export class Upstream {
         liveScopes = scopes;
       });
       try {
-        const items = await createGithubProvider().search({ assignee: tenant.githubLogin ?? tenant.login }, http);
+        const items = await createGithubProvider().search({ assignee: tenant.githubLogin ?? tenant.login, includeDone }, http);
         if (scopesObserved && sessionId !== null) {
           this.store.setScopes(sessionId, tier, liveScopes);
           grant.scopes = liveScopes;
@@ -104,8 +112,9 @@ export class Upstream {
    * Gitee 的一天过期在这里落地：真实租户在访问时懒刷新，演示租户由定时器按同一判定触发。
    * 刷新失败但旧 token 还未过期就继续用；已经过期才摘掉授权并显式回报 reauth。
    */
-  async gitee(tenant: Tenant, sessionId: string | null, isDemoTenant: boolean): Promise<GiteeSnapshot | null> {
+  async gitee(tenant: Tenant, sessionId: string | null): Promise<GiteeSnapshot | null> {
     if (tenant.gitee === undefined) return null;
+    const isDemoTenant = this.isDemoTenant(tenant);
     const key = tenant.giteeLogin ?? tenant.login;
     const running = this.giteeInFlight.get(key);
     if (running !== undefined) {
@@ -184,7 +193,7 @@ export class Upstream {
 
     try {
       const items = await createGiteeProvider().search(
-        { assignee: tenant.giteeLogin ?? tenant.login },
+        { assignee: tenant.giteeLogin ?? tenant.login, includeDone: isDemoTenant },
         createGiteeHttp(current.accessToken),
       );
       tenant.gitee = current;

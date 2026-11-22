@@ -1,6 +1,6 @@
 # ADR-0014 · 演示快照与账本 v2：刷新落点、锁与登录名查找
 
-**决策**：演示租户（#15）的取数落在服务端进程里：`DEMO_LOGIN` 命中的账本记录由 `setInterval`（`DEMO_REFRESH_MINUTES`，下限 1 分钟、上限 `2^31-1` 毫秒，写错退回 15 分钟）定时刷新，一次刷新的合并（in-flight 复用）就是这把锁；结果写成 `<DATA_DIR>/demo.json`（`{ generatedAt, items, gitee, connected }`，0600，临时文件 + rename），并由 `GET /api/demo/items` 公开只读、`Cache-Control: no-store` 返回。`POST /api/demo/reset`（Bearer = `DEMO_RESET_TOKEN`）立刻重跑同一条刷新路径，不另开分支。上游故障保留上一份好快照，不拿空清单覆盖；GitHub 与 Gitee 各自成对存 `items` / 连接态，一家掉线不抹掉另一家。
+**决策**：演示租户（#15）的取数落在服务端进程里：`DEMO_LOGIN` 命中的账本记录由 `setInterval`（`DEMO_REFRESH_MINUTES`，下限 1 分钟、上限 `2^31-1` 毫秒，写错退回 15 分钟）定时刷新，一次刷新的合并（in-flight 复用）就是这把锁；结果写成 `<DATA_DIR>/demo.json`（`{ generatedAt, items, gitee, connected }`，0600，临时文件 + rename），并由 `GET /api/demo/items` 公开只读、`Cache-Control: no-store` 返回。演示账号的取数带 `Scope.includeDone`：两家平台把已完成状态也取回来，快照因此能装载 12 条精选中的 2 条已完成；构建器仍按 `doneStates` 收敛，访客看到的是未完成项。访客自己的账号不带这个开关，不把历史指派拉回来。`POST /api/demo/reset`（Bearer = `DEMO_RESET_TOKEN`）立刻重跑同一条刷新路径，不另开分支。上游故障保留上一份好快照，不拿空清单覆盖；GitHub 与 Gitee 各自成对存 `items` / 连接态，一家掉线不抹掉另一家。
 
 账本形状推进到 `version: 2`：`Tenant` 增加 `githubLogin` / `giteeLogin` 与 `gitee`（加密的 access / refresh token、`expiresAt`、`lastRefreshAt`）。`version: 1` 仍可读；加密（AES-256-GCM）、`idHash` 查找、`lastSeenAt` 续期与 30 天清除全部沿用 ADR-0011。`login` 只是展示名（先连哪家就是哪家），无会话的演示刷新只按 `githubLogin` 找回账本，Gitee 的轮换写回只按 `giteeLogin` 定位；两条查找都不回落到展示名。真实租户一律按会话标识定位。演示定时器与 `/api/items` 共用一个 `Upstream` 实例，Gitee 的 in-flight 表按 `giteeLogin`（授权归属）而不是按会话作键，因此同一份授权不会因为一个走定时器、一个走会话而各换一次 token；被合并的等待者拿回结果后重读一次自己的账本副本，`connected` 与下一轮取数都对得上。
 

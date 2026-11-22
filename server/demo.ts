@@ -75,7 +75,7 @@ export class DemoRefresher {
       console.warn("[demo] github refresh failed; keeping last snapshot");
       return null;
     }
-    const gitee = await this.upstream.gitee(tenant, null, true);
+    const gitee = await this.upstream.gitee(tenant, null);
     if (gitee !== null && gitee.status === "unavailable") {
       console.warn("[demo] gitee refresh failed; keeping last snapshot");
       return null;
