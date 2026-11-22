@@ -132,11 +132,20 @@ export class DemoRefresher {
     // 完成态的判定跟构建器同一处来：provider 的 doneStates，不在这里再抄一份平台字面量。
     const githubProvider = createGithubProvider();
     const giteeProvider = createGiteeProvider();
-    const keyed = (provider: Provider, raw: RawItem) => ({ raw, provider, key: summaryKeyOf(provider, raw) });
-    const github = snapshot.items.map((raw) => keyed(githubProvider, raw));
-    const gitee = snapshot.gitee.map((raw) => keyed(giteeProvider, raw));
+    // 坏时间戳不该让整轮预生成停摆：单条归一失败就跳过这一条，其余照常。
+    const keyed = (provider: Provider, raw: RawItem) => {
+      try {
+        const task = provider.normalize(raw);
+        return { raw, task, key: taskSummaryKey(task) };
+      } catch {
+        return null;
+      }
+    };
+    const notNull = <T,>(one: T | null): one is T => one !== null;
+    const github = snapshot.items.map((raw) => keyed(githubProvider, raw)).filter(notNull);
+    const gitee = snapshot.gitee.map((raw) => keyed(giteeProvider, raw)).filter(notNull);
     const all = [...github, ...gitee];
-    const keep = new Set(all.map((one) => one.key).filter((key): key is string => key !== null));
+    const keep = new Set(all.map((one) => one.key));
     snapshot.summaries = Object.fromEntries(
       Object.entries(snapshot.summaries).filter(([key]) => keep.has(key)),
     );
@@ -147,7 +156,7 @@ export class DemoRefresher {
       ...github.filter((one) => notDone(one, githubProvider)),
       ...gitee.filter((one) => notDone(one, giteeProvider)),
     ]
-      .filter((one): one is { raw: RawItem; provider: Provider; key: string } => one.key !== null && snapshot.summaries[one.key] === undefined)
+      .filter((one) => snapshot.summaries[one.key] === undefined)
       .sort((a, b) => String(b.raw.updated_at ?? "").localeCompare(String(a.raw.updated_at ?? "")))
       .slice(0, SUMMARY_LIMIT);
     if (todo.length === 0) return;
@@ -163,7 +172,7 @@ export class DemoRefresher {
         try {
           const { text } = await composeSummary(this.config.deepseek, {
             title: typeof item.raw.title === "string" ? item.raw.title : "",
-            labels: [...item.provider.labels(item.raw)],
+            labels: [...item.task.labels],
           });
           snapshot.summaries[item.key] = text;
         } catch {
@@ -203,14 +212,3 @@ export class DemoRefresher {
   }
 }
 
-/**
- * 演示摘要的键：交给 provider 归一化后的任务 id（`provider:remoteId`）再拼归一化时间，
- * 与面板的 `summaryKey` 完全同一个口径（provider + issue_id + updated_at）。
- */
-function summaryKeyOf(provider: Provider, raw: RawItem): string | null {
-  try {
-    return taskSummaryKey(provider.normalize(raw));
-  } catch {
-    return null;
-  }
-}

@@ -28,8 +28,19 @@ const VIEW = {
 
 const TRIAGE = "jing-gou/triage360";
 
-function record(taskId: string, at: string, position: number, group = TRIAGE): PlacementRecord {
-  return { providerId: "github", taskId, group, at, position };
+function record(taskId: string, at: string, position: number, group = TRIAGE, labels?: string[]): PlacementRecord {
+  return { providerId: "github", taskId, group, at, position, ...(labels === undefined ? {} : { labels }) };
+}
+
+function labelled(number: number, title: string, updated_at: string, labels: string[]) {
+  return {
+    number,
+    title,
+    state: "open",
+    updated_at,
+    html_url: `https://github.com/jing-gou/triage360/issues/${number}`,
+    labels: labels.map((name) => ({ name })),
+  };
 }
 
 function deps(placements: readonly PlacementRecord[]) {
@@ -69,7 +80,7 @@ describe("seam 1 · 学习闭环按来源分组加权", () => {
       deps([record("github:901", "2026-11-16T10:00:00.000Z", 0), record("github:902", "2026-11-15T10:00:00.000Z", 1)]),
     );
 
-    expect(list.entries[0]?.learned).toEqual({ group: TRIAGE, hits: 2 });
+    expect(list.entries[0]?.learned).toEqual({ group: { name: TRIAGE, hits: 2 }, hits: 2 });
     expect(list.entries[1]?.learned).toBeUndefined();
   });
 
@@ -161,7 +172,7 @@ describe("seam 1 · 加权不跨档，分组认的是来源而不是平台", () 
     // 941 与 331 同档，且命中两次，于是压过更新时间更晚的 331——而 331 的来源一次都没被置顶。
     expect(list.entries.map((entry) => [entry.task.id, entry.reason, entry.learned])).toEqual([
       ["github:900", "overdue", undefined],
-      ["github:941", "noDeadline", { group: TRIAGE, hits: 2 }],
+      ["github:941", "noDeadline", { group: { name: TRIAGE, hits: 2 }, hits: 2 }],
       ["gitee:jing-gou/legacy-importer#331", "noDeadline", undefined],
     ]);
   });
@@ -174,8 +185,8 @@ describe("seam 1 · 加权不跨档，分组认的是来源而不是平台", () 
     ]));
 
     expect(list.entries.map((entry) => [entry.task.id, entry.learned])).toEqual([
-      ["github:900", { group: "jing-gou/legacy-importer", hits: 2 }],
-      ["gitee:jing-gou/legacy-importer#331", { group: "jing-gou/legacy-importer", hits: 2 }],
+      ["github:900", { group: { name: "jing-gou/legacy-importer", hits: 2 }, hits: 2 }],
+      ["gitee:jing-gou/legacy-importer#331", { group: { name: "jing-gou/legacy-importer", hits: 2 }, hits: 2 }],
       ["github:941", undefined],
     ]);
   });
@@ -206,8 +217,8 @@ describe("seam 1 · 来源分组键的两种回落", () => {
     });
 
     expect(list.entries.map((entry) => [entry.task.id, entry.learned])).toEqual([
-      ["jira:100BR-2", { group: JIRA_SITE, hits: 2 }],
-      ["jira:100BR-1", { group: JIRA_SITE, hits: 2 }],
+      ["jira:100BR-2", { group: { name: JIRA_SITE, hits: 2 }, hits: 2 }],
+      ["jira:100BR-1", { group: { name: JIRA_SITE, hits: 2 }, hits: 2 }],
       ["github:941", undefined],
     ]);
   });
@@ -222,7 +233,146 @@ describe("seam 1 · 来源分组键的两种回落", () => {
     });
 
     expect(list.entries.map((entry) => [entry.task.id, entry.learned])).toEqual([
-      ["github:943", { group: "github", hits: 2 }],
+      ["github:943", { group: { name: "github", hits: 2 }, hits: 2 }],
     ]);
+  });
+});
+
+describe("seam 1 · 学习闭环按标签加权（#36）", () => {
+  it("同一标签被连续置顶后，带这个标签的条目在同档里排到更新的那条之前", async () => {
+    const http = fakeHttp({
+      github: {
+        view: [
+          labelled(951, "带 bug 的老条目", "2026-11-14T10:00:00Z", ["bug"]),
+          labelled(952, "更新的普通条目", "2026-11-16T10:00:00Z", []),
+        ],
+      },
+    });
+    const placements = [
+      record("github:901", "2026-11-16T10:00:00.000Z", 0, "other/repo", ["bug"]),
+      record("github:902", "2026-11-15T10:00:00.000Z", 1, "other/repo", ["bug"]),
+    ];
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider()],
+      http,
+      now: clock,
+      scope,
+      placements,
+    });
+
+    expect(list.entries.map((entry) => entry.task.id)).toEqual(["github:951", "github:952"]);
+    expect(list.entries[0]?.learned).toEqual({ label: { name: "bug", hits: 2 }, hits: 2 });
+    expect(list.entries[1]?.learned).toBeUndefined();
+  });
+
+  it("标签加权越不过档位：逾期条目仍然排在带标签的无截止条目之前", async () => {
+    const http = fakeHttp({
+      github: {
+        view: [
+          { ...labelled(961, "逾期的", "2026-11-15T10:00:00Z", []), milestone: { due_on: "2026-11-10T00:00:00Z" } },
+          labelled(962, "带标签但没截止", "2026-11-16T10:00:00Z", ["bug"]),
+        ],
+      },
+    });
+    const placements = [
+      record("github:901", "2026-11-16T10:00:00.000Z", 0, "other/repo", ["bug"]),
+      record("github:902", "2026-11-15T10:00:00.000Z", 1, "other/repo", ["bug"]),
+    ];
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider()],
+      http,
+      now: clock,
+      scope,
+      placements,
+    });
+
+    expect(list.entries.map((entry) => [entry.task.id, entry.reason])).toEqual([
+      ["github:961", "overdue"],
+      ["github:962", "noDeadline"],
+    ]);
+  });
+
+  it("分组与标签同时命中时，一条 learned 里两个信号都在，强度取较大的那个", async () => {
+    const http = fakeHttp({
+      github: { view: [labelled(971, "同组同标签", "2026-11-14T10:00:00Z", ["bug"])] },
+    });
+    const placements = [
+      record("github:901", "2026-11-16T10:00:00.000Z", 0, TRIAGE, ["bug"]),
+      record("github:902", "2026-11-15T10:00:00.000Z", 1, TRIAGE, ["bug"]),
+      record("github:903", "2026-11-15T09:00:00.000Z", 2, TRIAGE, ["bug"]),
+    ];
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider()],
+      http,
+      now: clock,
+      scope,
+      placements,
+    });
+
+    // 三次组命中与三次标签命中：两个维度都在，强度取 3。
+    expect(list.entries[0]?.learned).toEqual({
+      group: { name: TRIAGE, hits: 3 },
+      label: { name: "bug", hits: 3 },
+      hits: 3,
+    });
+  });
+});
+
+describe("seam 1 · 合并卡的标签在并集之后才参与加权（#36）", () => {
+  it("兄弟来源命中的标签也能抬起合并卡，即使表头自己没有这个标签", async () => {
+    const http = fakeHttp({
+      github: {
+        view: [
+          {
+            ...labelled(981, "登录页 500", "2026-11-16T10:00:00Z", []),
+            milestone: { due_on: "2026-11-10T00:00:00Z" },
+          },
+        ],
+      },
+      gitee: { view: [{ ...ge(981, "Login 接口偶发 500", "2026-11-15T10:00:00Z"), labels: [{ name: "bug" }] }] },
+    });
+    const placements = [
+      record("github:901", "2026-11-16T10:00:00.000Z", 0, "other/repo", ["bug"]),
+      record("github:902", "2026-11-15T10:00:00.000Z", 1, "other/repo", ["bug"]),
+    ];
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider(), createGiteeLikeProvider()],
+      http,
+      now: clock,
+      scope,
+      placements,
+      sameEvent: (a, b) => a.title.includes("500") && b.title.includes("500"),
+    });
+
+    expect(list.entries).toHaveLength(1);
+    // 表头是逾期的 GitHub 条（无标签），并集里的 bug 来自 Gitee 兄弟来源。
+    expect(list.entries[0]?.task.id).toBe("github:981");
+    expect(list.entries[0]?.task.labels).toEqual(["bug"]);
+    expect(list.entries[0]?.learned).toEqual({ label: { name: "bug", hits: 2 }, hits: 2 });
+  });
+
+  it("一张卡命中多个标签时，只取命中次数最高的那个；同次按名字码元序破平", async () => {
+    const http = fakeHttp({
+      github: { view: [labelled(991, "两个标签都命中", "2026-11-14T10:00:00Z", ["alpha", "beta"])] },
+    });
+    const placements = [
+      record("github:901", "2026-11-16T10:00:00.000Z", 0, "other/repo", ["alpha", "beta"]),
+      record("github:902", "2026-11-15T10:00:00.000Z", 1, "other/repo", ["alpha"]),
+      record("github:903", "2026-11-15T09:00:00.000Z", 2, "other/repo", ["beta"]),
+    ];
+
+    const list = await buildTodayList({
+      providers: [createGithubLikeProvider()],
+      http,
+      now: clock,
+      scope,
+      placements,
+    });
+
+    expect(list.entries[0]?.learned).toEqual({ label: { name: "alpha", hits: 2 }, hits: 2 });
   });
 });

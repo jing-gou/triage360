@@ -12,6 +12,7 @@ const PROVIDER_ID = "github";
 const PER_PAGE = 100;
 
 interface GithubIssue {
+  labels?: unknown;
   number: number;
   title: string;
   html_url: string;
@@ -100,14 +101,12 @@ export function createGithubProvider(): Provider {
         title: issue.title,
         url: issue.html_url,
         state: issue.state,
+        labels: labelNames(issue.labels),
         updatedAt: new Date(issue.updated_at).toISOString(),
         ...(issue.milestone?.due_on ? dueFrom(issue.milestone.due_on) : { dueAt: undefined, duePrecision: undefined }),
       };
     },
 
-    labels(raw) {
-      return labelNames((raw as { labels?: unknown }).labels);
-    },
 
     doneStates() {
       return ["closed"];

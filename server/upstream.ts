@@ -1,5 +1,5 @@
 import { decideCredentialAction, recordRefreshAttempt, rotateCredential, type CredentialRecord } from "../src/core/credentials";
-import { providerIdOf, type Http, type Provider, type RawItem, type Tier } from "../src/core/provider";
+import { providerIdOf, type Http, type Provider, type RawItem, type Tier, labelNames } from "../src/core/provider";
 import { createGiteeProvider, GiteeUpstreamError } from "../src/providers/gitee";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import { createJiraProvider, JiraUpstreamError } from "../src/providers/jira";
@@ -56,6 +56,7 @@ function githubMeta(item: RawItem): RawItem {
     html_url: item.html_url,
     state: item.state,
     updated_at: item.updated_at,
+    labels: labelNames(item.labels),
     milestone: milestone == null ? null : { due_on: milestone.due_on ?? null },
     repository_url: item.repository_url,
   };
@@ -69,6 +70,7 @@ function giteeMeta(item: RawItem): RawItem {
     html_url: item.html_url,
     state: item.state,
     updated_at: item.updated_at,
+    labels: labelNames(item.labels),
     deadline: item.deadline ?? null,
     repository: repository == null ? null : { full_name: repository.full_name },
   };
@@ -80,6 +82,7 @@ function jiraMeta(item: RawItem): RawItem {
     status?: { statusCategory?: { key?: unknown } } | null;
     updated?: unknown;
     duedate?: unknown;
+    labels?: unknown;
   };
   return {
     id: item.id,
@@ -89,6 +92,7 @@ function jiraMeta(item: RawItem): RawItem {
       status: fields.status == null ? null : { statusCategory: { key: fields.status.statusCategory?.key } },
       updated: fields.updated,
       duedate: fields.duedate ?? null,
+      labels: labelNames(fields.labels),
     },
   };
 }

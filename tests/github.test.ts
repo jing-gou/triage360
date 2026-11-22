@@ -82,7 +82,7 @@ describe("seam 1 · 真实 GitHub provider：请求形状", () => {
 });
 
 describe("seam 1 · 真实 GitHub provider：normalize 输出", () => {
-  it("八键照常填齐，id 带上仓库路径，milestone 的 due_on 带时刻所以按 instant 粒度", async () => {
+  it("九键照常填齐，id 带上仓库路径，milestone 的 due_on 带时刻所以按 instant 粒度", async () => {
     const { http } = recordingHttp([
       searchItem(1041, "修复登录回调", "open", "2026-11-16T08:20:00Z", "2026-11-16T00:00:00Z"),
     ]);
@@ -96,6 +96,7 @@ describe("seam 1 · 真实 GitHub provider：normalize 输出", () => {
       title: "修复登录回调",
       url: "https://github.com/jing-gou/triage360/issues/1041",
       state: "open",
+      labels: [],
       updatedAt: "2026-11-16T08:20:00.000Z",
       dueAt: "2026-11-16T00:00:00.000Z",
       duePrecision: "instant",
@@ -125,6 +126,7 @@ describe("seam 1 · 真实 GitHub provider：上一轮条目按 id 补取", () =
       title: "修复登录回调",
       url: "https://github.com/jing-gou/triage360/issues/1041",
       state: "open",
+      labels: [],
       updatedAt: "2026-11-16T08:20:00.000Z",
     };
     const { calls, http } = recordingHttp(
@@ -145,6 +147,7 @@ describe("seam 1 · 真实 GitHub provider：上一轮条目按 id 补取", () =
       title: "修复登录回调",
       url: "https://github.com/jing-gou/triage360/issues/1041",
       state: "open",
+      labels: [],
       updatedAt: "2026-11-16T08:20:00.000Z",
     };
     const { http } = recordingHttp([]);

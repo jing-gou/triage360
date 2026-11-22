@@ -60,7 +60,7 @@ describe("seam 1 · 真实 Jira provider：请求形状", () => {
     expect(target.searchParams.get("jql")).toBe(
       "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
     );
-    expect(target.searchParams.get("fields")).toBe("summary,status,updated,duedate");
+    expect(target.searchParams.get("fields")).toBe("summary,status,updated,duedate,labels");
     expect(target.searchParams.get("maxResults")).toBe("50");
   });
 
@@ -89,6 +89,7 @@ describe("seam 1 · 真实 Jira provider：normalize 输出", () => {
       title: "任务 ABC-1",
       url: "https://acme.atlassian.net/browse/ABC-1",
       state: "indeterminate",
+      labels: [],
       updatedAt: "2026-11-16T00:20:00.000Z",
       dueAt: "2026-11-16T00:00:00.000Z",
       duePrecision: "day",
@@ -96,7 +97,7 @@ describe("seam 1 · 真实 Jira provider：normalize 输出", () => {
     expect(entry?.reason).toBe("overdue");
   });
 
-  it("Done 被 doneStates 收敛；没有截止时八键仍齐全", async () => {
+  it("Done 被 doneStates 收敛；没有截止时九键仍齐全", async () => {
     const { http } = recordingHttp([
       issue("10042", "ABC-1", "new", "2026-11-16T09:00:00.000+0800"),
       issue("10043", "ABC-2", "done", "2026-11-16T10:00:00.000+0800"),
@@ -117,6 +118,7 @@ describe("seam 1 · 真实 Jira provider：上一轮条目按 id 补取", () => 
     title: "任务 ABC-1",
     url: "https://acme.atlassian.net/browse/ABC-1",
     state: "new",
+    labels: [],
     updatedAt: "2026-11-16T00:20:00.000Z",
     dueAt: undefined,
     duePrecision: undefined,
@@ -134,7 +136,7 @@ describe("seam 1 · 真实 Jira provider：上一轮条目按 id 补取", () => 
     expect(lookup.origin + lookup.pathname).toBe(
       `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue/10042`,
     );
-    expect(lookup.searchParams.get("fields")).toBe("summary,status,updated,duedate");
+    expect(lookup.searchParams.get("fields")).toBe("summary,status,updated,duedate,labels");
     expect(list.entries).toEqual([]);
   });
 

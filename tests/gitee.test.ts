@@ -103,6 +103,7 @@ describe("seam 1 · 真实 Gitee provider：normalize 输出", () => {
       title: "任务 IDLSUI",
       url: "https://gitee.com/jing-gou/triage360/issues/IDLSUI",
       state: "open",
+      labels: [],
       updatedAt: "2026-11-16T00:20:00.000Z",
       dueAt: "2026-11-16T15:59:59.000Z",
       duePrecision: "instant",
@@ -110,7 +111,7 @@ describe("seam 1 · 真实 Gitee provider：normalize 输出", () => {
     expect(entry?.reason).toBe("overdue");
   });
 
-  it("没有 deadline 时八键仍齐全；closed / rejected 由 doneStates 收敛", async () => {
+  it("没有 deadline 时九键仍齐全；closed / rejected 由 doneStates 收敛", async () => {
     const { http } = recordingHttp({
       open: [
         issue("A1", "open", "2026-11-16T09:00:00+08:00"),
@@ -134,6 +135,7 @@ describe("seam 1 · 真实 Gitee provider：上一轮条目按 id 补取", () =>
     title: "任务 IDLSUI",
     url: "https://gitee.com/jing-gou/triage360/issues/IDLSUI",
     state: "open",
+    labels: [],
     updatedAt: "2026-11-16T00:20:00.000Z",
     dueAt: undefined,
     duePrecision: undefined,

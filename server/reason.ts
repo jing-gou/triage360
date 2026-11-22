@@ -1,4 +1,4 @@
-import { RULE_IDS, type RuleId } from "../src/core/today-list";
+import { RULE_IDS, learnedHits, type LearnedSignal, type RuleId } from "../src/core/today-list";
 import type { ReasonCard } from "../src/core/reason-card";
 import type { DeepseekConfig } from "./config";
 
@@ -20,7 +20,7 @@ const MAX_TOKENS = 200;
 const SYSTEM_PROMPT = [
   "你是任务清单的说明员。档位已由规则引擎定稿，位置可能已被用户手动调整；你只负责用一句中文说明这张卡为什么属于这一档，不超过 60 字。",
   "只依据用户消息里的元数据：不要编造正文、评论、代码或元数据之外的事实。",
-  "元数据里有 learned 时，句子必须同时点明档位原因（reason）与这条学习信号（哪个来源分组被连续置顶）；没有 learned 时一个字都不要提学习。",
+  "元数据里有 learned 时，句子必须同时点明档位原因（reason）与出现的每一个学习信号：group 是来源分组名、label 是标签名，两个都有就两个都要说到；没有 learned 时一个字都不要提学习。",
   "合并卡的其余来源由界面另行标注：不要猜测或列举其他来源平台。",
   "只输出那一句话：不要标题、列表、Markdown 或引号。",
 ].join("\n");
@@ -39,10 +39,15 @@ export function parseReasonCard(value: unknown): ReasonCard | null {
   const learnedRaw = raw.learned;
   let learned: ReasonCard["learned"];
   if (typeof learnedRaw === "object" && learnedRaw !== null) {
-    const { group, hits } = learnedRaw as Record<string, unknown>;
-    const name = text(group, 1, 140);
-    if (name !== null && typeof hits === "number" && Number.isInteger(hits) && hits >= 0 && hits <= 10_000) {
-      learned = { group: name, hits };
+    const source = learnedRaw as Record<string, unknown>;
+    const group = parseSignal(source.group);
+    const label = parseSignal(source.label);
+    if (group !== undefined || label !== undefined) {
+      learned = {
+        ...(group === undefined ? {} : { group }),
+        ...(label === undefined ? {} : { label }),
+        hits: learnedHits(group, label),
+      };
     }
   }
 
@@ -113,6 +118,17 @@ export async function composeReasonWording(
   return { text, elapsedMs: Date.now() - started };
 }
 
+/** learned 里的一维信号：`{ name, hits }`，逐字段验，别的键丢掉。 */
+function parseSignal(value: unknown): LearnedSignal | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { name, hits } = value as Record<string, unknown>;
+  const label = text(name, 1, 140);
+  if (label === null || typeof hits !== "number" || !Number.isInteger(hits) || hits < 0 || hits > 10_000) {
+    return undefined;
+  }
+  return { name: label, hits };
+}
+
 function isRuleId(value: unknown): value is RuleId {
   return typeof value === "string" && (RULE_IDS as readonly string[]).includes(value);
 }
@@ -129,8 +145,11 @@ function assertWording(text: string, card: ReasonCard): void {
   if (!TIER_HINTS[card.reason].some((hint) => text.includes(hint))) {
     throw new ReasonQualityError("措辞没有点明档位");
   }
-  if (card.learned !== undefined && !text.includes(card.learned.group)) {
-    throw new ReasonQualityError("措辞没有点明学习信号");
+  if (card.learned?.group !== undefined && !text.includes(card.learned.group.name)) {
+    throw new ReasonQualityError("措辞没有点明来源分组的命中");
+  }
+  if (card.learned?.label !== undefined && !text.includes(card.learned.label.name)) {
+    throw new ReasonQualityError("措辞没有点明标签的命中");
   }
 }
 

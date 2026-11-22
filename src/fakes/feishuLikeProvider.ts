@@ -10,6 +10,7 @@ const API = "https://open.feishu.cn";
 const PROVIDER_ID = "feishu";
 
 interface FeishuTask {
+  labels?: unknown;
   task_id: string;
   summary: string;
   done: boolean;
@@ -50,6 +51,7 @@ export function createFeishuSampleProvider(): Provider {
         title: task.summary,
         url: `https://applink.feishu.cn/client/todo/detail?guid=${task.task_id}`,
         state: stateOf(task),
+        labels: labelNames(task.labels),
         updatedAt: new Date(task.updated_at).toISOString(),
         // 飞书 v1 零真连代码，截止时间没有一手依据；键照样写出来，与另外三家同一形状。
         dueAt: undefined,
@@ -57,9 +59,6 @@ export function createFeishuSampleProvider(): Provider {
       };
     },
 
-    labels(raw) {
-      return labelNames((raw as { labels?: unknown }).labels);
-    },
 
     doneStates() {
       return ["done"];

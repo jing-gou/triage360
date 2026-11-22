@@ -8,7 +8,7 @@ import { dueFrom, makeTaskId, remoteIdOf, uniformAuth, labelNames, type Provider
  */
 
 const PROVIDER_ID = "jira";
-const FIELDS = "summary,status,updated,duedate";
+const FIELDS = "summary,status,updated,duedate,labels";
 const MAX_RESULTS = 50;
 
 interface JiraIssue {
@@ -19,6 +19,7 @@ interface JiraIssue {
     status?: { statusCategory?: { key?: string } | null } | null;
     updated: string;
     duedate?: string | null;
+    labels?: unknown;
   };
 }
 
@@ -76,6 +77,7 @@ export function createJiraProvider({ cloudId, siteUrl }: JiraProviderOptions): P
         title: issue.fields.summary,
         url: `${siteUrl}/browse/${issue.key}`,
         state: issue.fields.status?.statusCategory?.key ?? "unknown",
+        labels: labelNames(issue.fields.labels),
         updatedAt: new Date(issue.fields.updated).toISOString(),
         ...(typeof due === "string" && due !== ""
           ? dueFrom(due)
@@ -83,9 +85,6 @@ export function createJiraProvider({ cloudId, siteUrl }: JiraProviderOptions): P
       };
     },
 
-    labels(raw) {
-      return labelNames((raw as { fields?: { labels?: unknown } }).fields?.labels);
-    },
 
     doneStates() {
       return ["done"];

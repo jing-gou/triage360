@@ -3,6 +3,7 @@ import type { Provider, Scope, Tier } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
 import {
   buildTodayList,
+  type LearnedBoost,
   type ListEntry,
   type PlacementRecord,
   type RuleId,
@@ -590,6 +591,7 @@ export function App() {
       providerId: moved.task.providerId,
       taskId: moved.task.id,
       group: sourceGroupOf(moved.task),
+      labels: [...moved.task.labels],
       at: new Date().toISOString(),
       position: to,
     });
@@ -680,7 +682,7 @@ export function App() {
           try {
             const { text } = await requestSummary(API_BASE, session, {
               title: chunk.task.title,
-              labels: [...(chunk.labels ?? [])],
+              labels: [...chunk.task.labels],
             });
             rememberSummary(chunk.task, text);
             setSummaries((one) => ({ ...one, [key]: { status: "ready", text } }));
@@ -948,7 +950,7 @@ export function App() {
                 ))}
                 <span className="card-reason">{REASON_LABELS[reason]}</span>
                 {/* 命中行只在被抬起来的那些卡上出现（AC#3）；手动区里的卡不带它，构建器已经把 `learned` 剥掉了。 */}
-                {learned !== undefined && <span>因为你连续把 {learned.group} 排在前面</span>}
+                {learned !== undefined && <span>因为你连续把 {learnedSignal(learned)} 排在前面</span>}
                 <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
                 {/* 展开前只是一个弱化入口；展开后那句话整行落到下面，不挤压这一行的元数据。 */}
                 {whyState === undefined ? (
@@ -1298,11 +1300,19 @@ export function App() {
   );
 }
 
+/** 命中行的说法：来源分组与标签各说各的，两个都命中就一起说（#36）。 */
+function learnedSignal(learned: LearnedBoost): string {
+  const parts: string[] = [];
+  if (learned.group !== undefined) parts.push(learned.group.name);
+  if (learned.label !== undefined) parts.push(`「${learned.label.name}」标签`);
+  return parts.join(" 和 ");
+}
+
 /** 纯规则那句：没有 AI 时的唯一措辞来源，也是 AI 失败与超时时的回落。 */
 function ruleWording(entry: ListEntry): string {
   const base = RULE_WORDINGS[entry.reason];
   if (entry.learned === undefined) return base;
-  return `${base}你最近连续把 ${entry.learned.group} 排在前面，同档内它因此被提前。`;
+  return `${base}你最近连续把 ${learnedSignal(entry.learned)} 排在前面，同档内它因此被提前。`;
 }
 
 /** 上行给措辞通道的那张卡：白名单字段，正文、评论与 diff 不在其中（#8 AC#2）。 */

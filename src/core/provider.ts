@@ -21,8 +21,8 @@ export type Http = (url: string, init?: HttpRequestInit) => Promise<HttpResponse
 export type RawItem = Record<string, unknown>;
 
 /**
- * 归一化后的任务：跨平台共用的最小形状，定稿于 T03、T04 补第八键。
- * 八个键恒定，不按平台分叉；平台专有信息不许夹带在八键之外——各家差异一律在 `normalize` 里消化掉，
+ * 归一化后的任务：跨平台共用的最小形状，定稿于 T03、T04 补第八键、#36 补第九键 `labels`。
+ * 九个键恒定，不按平台分叉；平台专有信息不许夹带在九键之外——各家差异一律在 `normalize` 里消化掉，
  * 否则跨平台合并（T05）与打分（T04）会建在原始字段上。
  * `dueAt` 之所以在里面：逾期与今日到期是跨平台共有的语义（US#23），不是 GitHub 的 milestone 泄漏进了全局形状。
  */
@@ -34,6 +34,8 @@ export interface Task {
   url: string;
   /** 平台原始状态字面量，由 doneStates / deletedStates 解释。 */
   state: string;
+  /** 标签名（#36 的第九键）：学习加权按它多认一维，摘要按它上行；归一化后恒为数组，没有就是空。 */
+  labels: readonly string[];
   /** 统一成 UTC 的 `toISOString()` 形状：各家原始格式（`Z` / `+0800`）不可直接比大小。 */
   updatedAt: string;
   /**
@@ -63,11 +65,6 @@ export interface Provider {
   getByIds(ids: string[], http: Http): Promise<RawItem[]>;
   /** 平台原始条目 → 任务。 */
   normalize(raw: RawItem): Task;
-  /**
-   * 条目自带标签名（#20 的摘要通道要按「标题与标签」上行）。
-   * 它不进任务八键：标签只服务措辞，不参与归一、打分与合并。
-   */
-  labels(raw: RawItem): readonly string[];
   /** 哪些状态字面量算「已完成」。 */
   doneStates(): string[];
   /** 哪些状态字面量算「已删除」。 */

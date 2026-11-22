@@ -98,7 +98,7 @@
 - **前端托管 Qoder Sites（公开访问）+ 后端在自有服务器**（已有域名与 HTTPS）。理由三条且都是一手事实：换取 token 必须服务端（GitHub/Gitee 的 `client_secret` 均 Required、PKCE 不替代、Atlassian 无 implicit flow）；Gitee access_token **一天过期**需要真定时器；回调 URL 需在三家后台预登记、要永久稳定的主机名。
 - 回调三条固定路径 `/cb/github`、`/cb/gitee`、`/cb/jira`，**不开 wildcard**。
 - 站点密钥使用 Qoder Sites 的服务端 secret 存储（平台声明读取接口永不返回明文），`client_secret` 不进前端包、不进仓库。
-- **Provider 统一契约（内部，不开放第三方插件）**：`search()`、`getByIds()`、`normalize()`、`labels()`、`doneStates`、`deletedStates`、`pollIntervalMs`、`scopeDescriptor`。`labels()` 是 #20 为摘要通道追加的第八法，只回标签名，不进任务八键。界面与规划层只认归一化后的形状。`scopeDescriptor` 必需，因为各平台授权粒度不对称。`normalize()` 在阶段 1 定稿，否则跨平台合并会建在各家原始字段上。
+- **Provider 统一契约（内部，不开放第三方插件）**：`search()`、`getByIds()`、`normalize()`、`doneStates`、`deletedStates`、`pollIntervalMs`、`scopeDescriptor`。标签由 `normalize` 归一成任务的第九键（#36 / ADR-0017）。界面与规划层只认归一化后的形状。`scopeDescriptor` 必需，因为各平台授权粒度不对称。`normalize()` 在阶段 1 定稿，否则跨平台合并会建在各家原始字段上。
 - 批量刷新语义借自 Super Productivity：按 id 批量取回（未返回的 id 视为「跳过」而非「已删除」），并把已存在 id 集合传给 provider 以实现 backlog 自动导入。**每 provider 每轮 ≈ 一个批量请求**，不是每任务一个。
 
 ### 四个 provider 的真实程度（必须各自标明，不得含糊）
