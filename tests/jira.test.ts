@@ -97,7 +97,7 @@ describe("seam 1 · 真实 Jira provider：normalize 输出", () => {
     expect(entry?.reason).toBe("overdue");
   });
 
-  it("Done 被 doneStates 收敛；没有截止时八键仍齐全", async () => {
+  it("Done 被 doneStates 收敛；没有截止时九键仍齐全", async () => {
     const { http } = recordingHttp([
       issue("10042", "ABC-1", "new", "2026-11-16T09:00:00.000+0800"),
       issue("10043", "ABC-2", "done", "2026-11-16T10:00:00.000+0800"),

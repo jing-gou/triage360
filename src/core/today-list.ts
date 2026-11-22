@@ -168,13 +168,17 @@ export async function buildTodayList({
   const instant = now().toISOString();
   const groupBoost = hitsByGroup(placements, instant);
   const labelBoost = hitsByLabel(placements, instant);
+  /** 一条任务的两维信号：分组从 `url` 派生，标签读第九键（#36）。 */
+  const boostFor = (task: Task): LearnedBoost | undefined => {
+    const group = sourceGroupOf(task);
+    return buildBoost(group, groupBoost.get(group), bestLabelHit(task.labels, labelBoost));
+  };
   const entries: ListEntry[] = batches
     .flatMap((batch) =>
       batch.present
         .filter(({ done }) => !done)
         .map(({ task }) => {
-          const group = sourceGroupOf(task);
-          const learned = buildBoost(group, groupBoost.get(group), bestLabelHit(task.labels, labelBoost));
+          const learned = boostFor(task);
           return {
             ...baseEntry(task, batch, instant, zoneOffsetMinutes),
             ...(learned === undefined ? {} : { learned }),
@@ -208,11 +212,9 @@ export async function buildTodayList({
   // 否则兄弟来源里命中的标签永远抬不动这张卡（#36）。
   const merged = mergeDuplicates(entries, sameEvent);
   for (const entry of merged) {
-    const learned = buildBoost(
-      sourceGroupOf(entry.task),
-      groupBoost.get(sourceGroupOf(entry.task)),
-      bestLabelHit(entry.task.labels, labelBoost),
-    );
+    // 只有合并过的条目标签变过；单来源条目的 learned 在构造时已经算好。
+    if (entry.mergedFrom === undefined) continue;
+    const learned = boostFor(entry.task);
     if (learned === undefined) delete entry.learned;
     else entry.learned = learned;
   }
@@ -257,7 +259,7 @@ function buildBoost(
   return {
     ...(groupHits === undefined ? {} : { group: { name: group, hits: groupHits } }),
     ...(labelHit === undefined ? {} : { label: labelHit }),
-    hits: learnedHits(groupHits === undefined ? undefined : { name: group, hits: groupHits }, labelHit),
+    hits: Math.max(groupHits ?? 0, labelHit?.hits ?? 0),
   };
 }
 

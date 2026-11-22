@@ -111,7 +111,7 @@ describe("seam 1 · 真实 Gitee provider：normalize 输出", () => {
     expect(entry?.reason).toBe("overdue");
   });
 
-  it("没有 deadline 时八键仍齐全；closed / rejected 由 doneStates 收敛", async () => {
+  it("没有 deadline 时九键仍齐全；closed / rejected 由 doneStates 收敛", async () => {
     const { http } = recordingHttp({
       open: [
         issue("A1", "open", "2026-11-16T09:00:00+08:00"),
