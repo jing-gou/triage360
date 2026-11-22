@@ -52,7 +52,20 @@ export function createSnapshotHttp(
             : giteeItems.filter((item) => (item as { state?: unknown }).state === state),
       };
     }
-    return { status: 200, headers: {}, body: { items: [...githubItems] } };
+    // GitHub 的 includeDone 分两次查（`is:open` / `is:closed`），这里必须按查询串各回一份：
+    // 两次都回整份列表会把同一条算成两张卡，完整视图的条数也跟着翻倍。
+    const query = target.searchParams.get("q") ?? "";
+    const wantsOpen = query.includes("is:open");
+    const wantsClosed = query.includes("is:closed");
+    const itemsForQuery =
+      wantsOpen === wantsClosed
+        ? githubItems
+        : githubItems.filter((item) =>
+            wantsClosed
+              ? (item as { state?: unknown }).state === "closed"
+              : (item as { state?: unknown }).state !== "closed",
+          );
+    return { status: 200, headers: {}, body: { items: [...itemsForQuery] } };
   };
 }
 

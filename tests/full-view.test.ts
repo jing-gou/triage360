@@ -3,6 +3,9 @@ import { buildTodayList } from "../src/core/today-list";
 import type { Http, Scope } from "../src/core/provider";
 import { fakeHttp } from "../src/fakes/fakeHttp";
 import { createGithubLikeProvider } from "../src/fakes/githubLikeProvider";
+import { createSnapshotHttp } from "../src/panel/snapshot-http";
+import { createGithubProvider } from "../src/providers/github";
+import { createGiteeProvider } from "../src/providers/gitee";
 
 const scope: Scope = { assignee: "me" };
 const clock = () => new Date("2026-11-17T09:00:00+08:00");
@@ -29,6 +32,17 @@ const OPEN = [
 const DONE = Array.from({ length: 71 }, (_, index) =>
   issue(4001 + index, `已完成 ${index + 1}`, "closed", "2026-11-14T10:00:00Z"),
 );
+
+function giteeIssue(number: number, state: string, updated_at: string) {
+  return {
+    number: `I${number}`,
+    title: `Gitee ${number}`,
+    state,
+    updated_at,
+    html_url: `https://gitee.com/sugarpub/triage360-demo/issues/I${number}`,
+    repository: { full_name: "sugarpub/triage360-demo" },
+  };
+}
 
 const ALL = [...OPEN, ...DONE];
 
@@ -101,5 +115,55 @@ describe("seam 1 · 完整视图（对照 83 条）", () => {
       "已完成较晚",
       "已完成较早",
     ]);
+  });
+
+  it("Gitee 的已完成条目要带 includeDone 才进完整视图，请求仍是每状态一次", async () => {
+    const open = Array.from({ length: 12 }, (_, index) => giteeIssue(6100 + index, "open", "2026-11-16T10:00:00Z"));
+    const closed = Array.from({ length: 71 }, (_, index) =>
+      giteeIssue(6200 + index, "closed", "2026-11-14T10:00:00Z"),
+    );
+    const replay = createSnapshotHttp([], [...open, ...closed]);
+    let calls = 0;
+    const http: Http = (url, init) => {
+      calls += 1;
+      return replay(url, init);
+    };
+
+    const list = await buildTodayList({
+      providers: [createGiteeProvider()],
+      http,
+      now: clock,
+      scope: { assignee: "me", includeDone: true },
+    });
+
+    expect(list.entries).toHaveLength(12);
+    expect(list.full).toHaveLength(83);
+    // open / progressing / closed / rejected 各一次；不是每条一次。
+    expect(calls).toBe(4);
+  });
+
+  it("GitHub 快照按 is:open / is:closed 各回一份，同一条不会被回两遍", async () => {
+    const items = [
+      issue(7001, "开着的甲", "open", "2026-11-16T10:00:00Z"),
+      issue(7002, "开着的乙", "open", "2026-11-16T09:00:00Z"),
+      issue(7003, "已关闭的", "closed", "2026-11-15T10:00:00Z"),
+    ];
+    const replay = createSnapshotHttp(items, []);
+    let calls = 0;
+    const http: Http = (url, init) => {
+      calls += 1;
+      return replay(url, init);
+    };
+
+    const list = await buildTodayList({
+      providers: [createGithubProvider()],
+      http,
+      now: clock,
+      scope: { assignee: "me", includeDone: true },
+    });
+
+    expect(list.entries).toHaveLength(2);
+    expect(list.full).toHaveLength(3);
+    expect(calls).toBe(2);
   });
 });

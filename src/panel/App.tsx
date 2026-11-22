@@ -394,7 +394,9 @@ export function App() {
         giteePrevious: payload.gitee.previous,
         failed: failuresFrom(payload, expired),
         now: new Date(),
-        scope: { assignee: payload.login },
+        // 服务端快照里可能带已完成条目（演示租户的 includeDone）：带上它，Gitee 才会把
+        // closed / rejected 的状态也取进完整视图；真实访客的快照没有这些条目，多取两次只会是空集。
+        scope: { assignee: payload.login, includeDone: true },
         zoneOffsetMinutes,
         previous,
         lastGoodAt,
@@ -429,7 +431,9 @@ export function App() {
         giteeItems: snapshot.gitee,
         // 排序基准取快照时刻：访客看到的是那一轮取数的切片，不是「刚刚」。
         now: new Date(snapshot.generatedAt),
-        scope,
+        // 演示快照是唯一确定带已完成条目的来源：Gitee 要把 closed / rejected 也取回来，
+        // 否则「12 条未完成 + 71 条已完成」的 83 条在完整视图里只剩 12 条（#18 AC#3）。
+        scope: { ...scope, includeDone: true },
         zoneOffsetMinutes,
         lastGoodAt,
         manualOrder: local.manualOrder,
@@ -726,7 +730,12 @@ export function App() {
           >
             {fullViewOpen ? "收起，回到今日清单" : `展开完整视图（${list.full.length} 条）`}
           </button>
-          {fullViewOpen && <span className="view-toggle-note">含已完成 {completedCount} 条，未完成在前</span>}
+          {fullViewOpen && (
+            <span className="view-toggle-note">
+              今日清单 {list.entries.length} 张卡 · 完整视图 {list.full.length} 条源站条目（含已完成{" "}
+              {completedCount}）
+            </span>
+          )}
         </p>
       )}
       {fullViewOpen && hasFullView ? (
