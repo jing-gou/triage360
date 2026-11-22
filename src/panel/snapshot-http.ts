@@ -5,20 +5,33 @@ import type { Http } from "../core/provider";
  * 不能对任何 URL 都回同一整份列表——Gitee 的 open / progressing 各取一次会把同一张卡出两遍，
  * 按 id 补取单条时也会拿到整份数组。
  */
+export type SnapshotFailure = "github" | "gitee";
+
 export function createSnapshotHttp(
   githubItems: readonly unknown[],
   giteeItems: readonly unknown[],
+  failed: readonly SnapshotFailure[] = [],
+  githubPrevious: readonly unknown[] = [],
+  giteePrevious: readonly unknown[] = [],
 ): Http {
   return async (url) => {
     const target = new URL(url);
     const single = /\/repos\/([^/]+\/[^/]+)\/issues\/([^/]+)$/.exec(target.pathname);
     const isGitee = target.hostname === "gitee.com";
+    // 服务端已经判定这一家这一轮失败：让 provider 真的抛错，构建器才会退回上一轮并打水印；
+    // 不能回一份空数组冒充「这一家今天没事」。
+    if (failed.includes(isGitee ? "gitee" : "github")) {
+      throw new Error(`${isGitee ? "Gitee" : "GitHub"} 这一轮没有取到数据`);
+    }
     const items = isGitee ? giteeItems : githubItems;
+    const previous = isGitee ? giteePrevious : githubPrevious;
 
     if (single !== null) {
       const repo = decodeURIComponent(single[1] ?? "");
       const number = decodeURIComponent(single[2] ?? "");
-      const hit = items.find(
+      // 活跃视图里找不到时，再去服务端上一轮按 id 核对回来的记录里找：
+      // 命中已关闭的条目由构建器的 doneStates 收敛掉，这里不能替它判断。
+      const hit = [...items, ...previous].find(
         (item) =>
           (isGitee ? giteeRepoOf(item) : githubRepoOf(item)) === repo &&
           String((item as { number?: unknown }).number) === number,

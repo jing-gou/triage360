@@ -41,7 +41,11 @@ function splitRemoteId(remoteId: string): { repo: string; number: string } | nul
 
 /** 源站非 200 时带上状态码抛出去：服务端要靠 401 分辨「授权失效」与其他上游故障。 */
 export class GithubUpstreamError extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly status: number,
+    /** 403 也可能是限流；`X-RateLimit-Remaining: 0` 时不能把故障说成权限不足。 */
+    readonly rateLimited = false,
+  ) {
     super(`github 返回 ${status}`);
     this.name = "GithubUpstreamError";
   }
@@ -65,7 +69,9 @@ export function createGithubProvider(): Provider {
         states.map(async (state) => {
           const q = encodeURIComponent(`assignee:@me is:issue ${state}`);
           const res = await http(`${API}/search/issues?q=${q}&per_page=${PER_PAGE}`);
-          if (res.status !== 200) throw new GithubUpstreamError(res.status);
+          if (res.status !== 200) {
+            throw new GithubUpstreamError(res.status, res.headers["x-ratelimit-remaining"] === "0");
+          }
           return ((res.body as { items?: RawItem[] }).items ?? []) as RawItem[];
         }),
       );

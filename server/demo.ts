@@ -76,19 +76,27 @@ export class DemoRefresher {
       return null;
     }
     const gitee = await this.upstream.gitee(tenant, null);
-    if (gitee !== null && gitee.status === "unavailable") {
+    if (github.status === "unavailable") {
+      console.warn("[demo] github refresh failed; keeping last snapshot");
+      return null;
+    }
+    if (github.status === "reauth") {
+      console.warn("[demo] github authorization expired; keeping last snapshot");
+      return null;
+    }
+    if (gitee !== null && (gitee.status === "unavailable" || gitee.status === "reauth")) {
       console.warn("[demo] gitee refresh failed; keeping last snapshot");
       return null;
     }
-    if (github === null && gitee === null) {
+    if (github.status === "none" && gitee === null) {
       console.warn("[demo] demo tenant has no credentials; skipping refresh");
       return null;
     }
     const snapshot: DemoSnapshot = {
       generatedAt: new Date(this.now()).toISOString(),
-      items: github?.items ?? [],
+      items: github.items,
       gitee: gitee?.status === "ok" ? gitee.items : [],
-      connected: { github: github !== null, gitee: gitee?.status === "ok" },
+      connected: { github: github.status === "ok", gitee: gitee?.status === "ok" },
     };
     this.persist(snapshot);
     this.current = snapshot;

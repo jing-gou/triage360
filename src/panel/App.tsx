@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Provider, Scope, Tier } from "../core/provider";
 import { sourceGroupOf } from "../core/source-group";
-import { buildTodayList, type ListEntry, type RuleId, type TodayList } from "../core/today-list";
+import {
+  buildTodayList,
+  type ListEntry,
+  type PlacementRecord,
+  type RuleId,
+  type TodayList,
+} from "../core/today-list";
 import { createSampleProviders, demoSameEvent, sampleHttp } from "../fakes/samples";
 import { createGiteeProvider } from "../providers/gitee";
 import { createGithubProvider } from "../providers/github";
@@ -15,10 +21,12 @@ import {
   requestReason,
   revokeSession,
   UnauthenticatedError,
+  type DemoPayload,
   type GithubAuth,
+  type ItemsPayload,
   type TierGrant,
 } from "./api";
-import { createSnapshotHttp } from "./snapshot-http";
+import { createSnapshotHttp, type SnapshotFailure } from "./snapshot-http";
 import type { ReasonCard } from "../core/reason-card";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { clearLocalRecords, hasLocalRecords } from "./local-records";
@@ -38,6 +46,179 @@ const WALL_CLOCK = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "
 /** 这一轮服务端手里还握着哪几家的授权；`null` = 这一屏没走真实链路。 */
 type Connected = { github: boolean; gitee: boolean };
 
+/** 可见 tab 的轮询间隔：两家的 `pollIntervalMs()` 都是 30 秒，这里取同一个节拍。 */
+const POLL_MS = 30_000;
+
+/** 一家这一轮的问题：授权失效、权限没给够、还是上游暂时不可达。 */
+interface ProviderProblem {
+  providerId: SnapshotFailure;
+  kind: "reauth" | "scope" | "unavailable";
+  detail?: string;
+}
+
+function problemLabel(problem: ProviderProblem): string {
+  const name = SOURCE_LABELS[problem.providerId]?.label ?? problem.providerId;
+  const reason =
+    problem.kind === "reauth" ? "授权已失效" : problem.kind === "scope" ? "权限未授予" : "暂不可达";
+  return `${name} ${reason}`;
+}
+
+function providersFrom(flags: Connected): Provider[] {
+  const providers: Provider[] = [];
+  if (flags.github) providers.push(createGithubProvider());
+  if (flags.gitee) providers.push(createGiteeProvider());
+  return providers;
+}
+
+/**
+ * 授权失效的家也留在构建里：它这一轮取不到数，正好走失败分支，把上一轮卡片连同水印一起留下
+ * （Q37「保留上次快照水印」）。只把「从没连过」的家排除在外。
+ */
+function providersFromPayload(payload: ItemsPayload, expired: ReadonlySet<SnapshotFailure>): Provider[] {
+  return providersFrom({
+    github: payload.github.status !== "none" || expired.has("github"),
+    gitee: payload.gitee.status !== "none" || expired.has("gitee"),
+  });
+}
+
+/** `reauth` 与上游故障同走失败分支：前者卡片带水印留存，后者同样退回上一轮。 */
+function failuresFrom(payload: ItemsPayload, expired: ReadonlySet<SnapshotFailure>): SnapshotFailure[] {
+  const failed: SnapshotFailure[] = [];
+  if (payload.github.status === "unavailable" || payload.github.status === "reauth" || expired.has("github")) {
+    failed.push("github");
+  }
+  if (payload.gitee.status === "unavailable" || payload.gitee.status === "reauth" || expired.has("gitee")) {
+    failed.push("gitee");
+  }
+  return failed;
+}
+
+function problemsFrom(
+  payload: ItemsPayload,
+  expired: ReadonlySet<SnapshotFailure>,
+  droppedTiers: ReadonlySet<Tier>,
+): ProviderProblem[] {
+  const problems: ProviderProblem[] = [];
+  const scopeMissing = Object.values(payload.auth.grants).some(
+    (grant) => grant !== undefined && grant.missing.length > 0,
+  );
+  // 授权失效不会因为服务端下一轮不再报 reauth 就自愈：在重新授权之前，角标一直给入口。
+  if (expired.has("github") || payload.github.status === "reauth" || droppedTiers.size > 0) {
+    problems.push({ providerId: "github", kind: "reauth" });
+  } else if (payload.github.status === "unavailable") {
+    problems.push({
+      providerId: "github",
+      // 只有这一轮真的是 403 且非限流时才算权限问题；库存的 missing scope 不能替上游故障背锅。
+      kind: payload.github.forbidden === true && scopeMissing ? "scope" : "unavailable",
+      ...(payload.github.detail === undefined ? {} : { detail: payload.github.detail }),
+    });
+  }
+  if (expired.has("gitee") || payload.gitee.status === "reauth") {
+    problems.push({ providerId: "gitee", kind: "reauth" });
+  } else if (payload.gitee.status === "unavailable") {
+    problems.push({
+      providerId: "gitee",
+      kind: "unavailable",
+      ...(payload.gitee.detail === undefined ? {} : { detail: payload.gitee.detail }),
+    });
+  }
+  return problems;
+}
+
+/**
+ * 演示截图用的确定性异常态：`?demoFail=github|gitee` 只在公开演示路径生效。
+ * 先按真实快照成功建一轮，再让选中的那一家抛错，走的是和线上一样的失败分支与水印。
+ */
+function forcedDemoFailure(): SnapshotFailure | null {
+  const value = new URLSearchParams(window.location.search).get("demoFail");
+  return value === "github" || value === "gitee" ? value : null;
+}
+
+/** 合并卡的全部来源；没合并就是它自己。跨轮、水印与删除确认都按这个全集走（ADR-0003、ADR-0006）。 */
+function sourcesOf(entry: ListEntry): readonly ListEntry["task"][] {
+  return entry.mergedFrom ?? [entry.task];
+}
+
+/**
+ * 每条上一轮任务按**自己的 provider**取最后成功时刻。
+ * 合并卡只有一个 `snapshotAt`，分不清是哪一侧失败；把它抄给两边会让另一侧下次失败时
+ * 显示更早的时间，所以这里维护的是逐家账，不是逐卡账。
+ */
+function snapshotTimes(
+  list: TodayList | null,
+  lastGoodAt: ReadonlyMap<string, string>,
+): Record<string, string> {
+  if (list === null) return {};
+  const out: Record<string, string> = {};
+  for (const entry of list.entries) {
+    for (const task of sourcesOf(entry)) {
+      const at = lastGoodAt.get(task.providerId);
+      if (at !== undefined) out[task.id] = at;
+    }
+  }
+  return out;
+}
+
+/** 上一轮清单里的全部任务 id：合并卡的每个来源都要保留，源站关掉其中一侧时卡片才会收紧。 */
+function previousIdsOf(list: TodayList | null): string[] {
+  if (list === null) return [];
+  return [...new Set(list.entries.flatMap((entry) => sourcesOf(entry).map((task) => task.id)))];
+}
+
+interface RoundOptions {
+  providers: readonly Provider[];
+  githubItems: readonly unknown[];
+  giteeItems: readonly unknown[];
+  /** 上一轮见过、这一轮活跃视图没返回、由服务端按 id 核对回来的记录。 */
+  githubPrevious?: readonly unknown[];
+  giteePrevious?: readonly unknown[];
+  failed: readonly SnapshotFailure[];
+  now: Date;
+  scope: Scope;
+  zoneOffsetMinutes: number;
+  previous: TodayList | null;
+  /** 各 provider 最后一次成功取数的时刻；失败家的上一轮任务靠它停在水印上。 */
+  lastGoodAt: ReadonlyMap<string, string>;
+  manualOrder: readonly string[];
+  placements: readonly PlacementRecord[];
+}
+
+/** 服务端已经取回原始条目；归一、收敛、打分与跨轮补取仍在本机走 seam 1。 */
+function buildRound({
+  providers,
+  githubItems,
+  giteeItems,
+  githubPrevious = [],
+  giteePrevious = [],
+  failed,
+  now,
+  scope,
+  zoneOffsetMinutes,
+  previous,
+  lastGoodAt,
+  manualOrder,
+  placements,
+}: RoundOptions): Promise<TodayList> {
+  const previousTasks = previous === null ? [] : previous.entries.flatMap(sourcesOf);
+  return buildTodayList({
+    providers: [...providers],
+    http: createSnapshotHttp(githubItems, giteeItems, failed, githubPrevious, giteePrevious),
+    now: () => now,
+    scope,
+    zoneOffsetMinutes,
+    sameEvent: demoSameEvent,
+    ...(previous === null
+      ? {}
+      : {
+          previous: previousTasks,
+          previousGeneratedAt: previous.generatedAt,
+          previousSnapshotAt: snapshotTimes(previous, lastGoodAt),
+        }),
+    manualOrder,
+    placements,
+  });
+}
+
 /**
  * 来源在界面上的真实程度（`docs/PRD.md` 的真实程度表）。默认四家都是字面量数据，
  * 所以都标样例数据；某一家真的连上之后这一家才不带样例标记（GitHub T09、Gitee #17），
@@ -50,10 +231,15 @@ const SOURCE_LABELS: Record<string, { label: string; sample?: string }> = {
   feishu: { label: "飞书", sample: "样例数据 · 真实接入需企业自建应用" },
 };
 
-/** 这一家真的连上了才不标样例；其余几家原样保留限定词。 */
+/**
+ * 真实链路上的 GitHub / Gitee 不再标样例——包括这一家本轮授权失效、暂时不在 connected 里的情况：
+ * 它仍是已接线的平台，只是需要重连；把失效说成「样例」会把问题指错方向。
+ * 样例屏（connected === null）与 Jira / 飞书仍保留限定词。
+ */
 function sourceLabel(providerId: string, connected: Connected | null): { label: string; sample?: string } {
   const base = SOURCE_LABELS[providerId] ?? { label: providerId };
-  return connected !== null && connected[providerId as keyof Connected] === true ? { label: base.label } : base;
+  const wired = wiredProviders.some((provider) => provider.id === providerId);
+  return wired && connected !== null ? { label: base.label } : base;
 }
 
 /**
@@ -98,11 +284,16 @@ export function App() {
   /** 这一屏是公开演示快照：数据来自演示账号的真实取数，但没有访客自己的授权。 */
   const [demo, setDemo] = useState(false);
   const live = connected !== null && !demo;
+  /** 这一屏最终落在哪条数据源上；样例屏不提供刷新，重载页面才会重新探测后端。 */
+  const [dataMode, setDataMode] = useState<"live" | "demo" | "sample" | null>(null);
   const [reconnect, setReconnect] = useState(false);
-  /** 唯一接线的 uniform 档（Gitee）这一轮没取到数据时的标注；常态为 `null`，界面按 kind 取用。 */
-  const [uniformNote, setUniformNote] = useState<string | null>(null);
-  /** 不可达的原始原因（403 / User-Agent 等）：角标只留一句短话，细节放进档位弹层。 */
-  const [uniformDetail, setUniformDetail] = useState<string | null>(null);
+  /** 这一轮每一家各自出了什么问题；空数组 = 常态，界面不多说一句。 */
+  const [problems, setProblems] = useState<ProviderProblem[]>([]);
+  /** 整轮刷新失败（后端不可达等）：保留上一轮清单，只角标里说一句。 */
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  /** 轮询与手动刷新共用一个入口；由挂载时的 effect 装填，按钮只负责喊一声。 */
+  const refreshRef = useRef<() => void>(() => {});
   /** 浏览器手里还握着一枚会话标识：即便这一屏没连上，撤销入口也得在——否则旧租户没人能清。 */
   const [hasSession, setHasSession] = useState(false);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -118,118 +309,239 @@ export function App() {
 
   useEffect(() => {
     let alive = true;
+    /** 这一屏的数据源已经定了：轮询只沿用它，不因为一次失败就悄悄换成样例。 */
+    let mode: "live" | "demo" | "sample" | null = null;
+    /** 上一轮的清单：下一轮把它交给构建器，源站已删除的条目才会真的消失。 */
+    let previous: TodayList | null = null;
+    /** 各 provider 最后一次成功取数的时刻：一家失败多轮时，水印停在那里不往后滚。 */
+    const lastGoodAt = new Map<string, string>();
+    /** 已经报过授权失效的家/档：服务端下一轮不再报 reauth，也不等于授权自己恢复了。 */
+    const expired = new Set<SnapshotFailure>();
+    const droppedTiers = new Set<Tier>();
+    let busy = false;
     // 「今日」按访客日历里的今天判：偏移由界面这一侧喂进来，构建器自己不读宿主时区（ADR-0005）。
     const zoneOffsetMinutes = -new Date().getTimezoneOffset();
-    // 上一轮排的顺序与往期放置都回到构建器：存储归界面管，构建器只认注入（ADR-0007、ADR-0009）。
-    const local = { manualOrder: loadManualOrder(), placements: loadLearningRecords() };
-    // 本地那两份记录是否存在，决定右下角出不出现「清除本地记录」——它是它们唯一的删除入口。
-    setHasLocal(hasLocalRecords());
+    // 演示异常态只在公开快照这一屏生效，登录用户不会被一个查询参数改变数据源。
+    const forcedFailure = forcedDemoFailure();
 
-    async function load() {
-      // 没有构建期后端地址就没有真实链路：面板保持样例，右下角也不出现「连接」。
-      const session = API_BASE === "" ? null : adoptSessionFromUrl();
-      if (session !== null) {
-        setHasSession(true);
-        try {
-          const payload = await fetchItems(API_BASE, session);
-          // 只构建这一轮还连着的家：Gitee 没连就不拿样例顶替（那会和「已连上」混在一起），
-          // 取数失败的那一家由角标单独说明，不拖白另一家。
-          const providers: Provider[] = [];
-          if (payload.connected.github) providers.push(createGithubProvider());
-          if (payload.connected.gitee) providers.push(createGiteeProvider());
-          const next = await buildTodayList({
-            providers,
-            // 条目已经从服务端取回，这一次取数不再出发请求；归一与排序仍在本机走 seam 1。
-            http: createSnapshotHttp(payload.items, payload.gitee.items),
-            now: () => new Date(),
-            scope: { assignee: payload.login },
-            zoneOffsetMinutes,
-            // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
-            sameEvent: demoSameEvent,
-            ...local,
-          });
-          if (!alive) return;
-          setList(next);
-          setAuth(payload.auth);
-          setConnected(payload.connected);
-          setDemo(false);
-          setUniformNote(
-            payload.gitee.status === "reauth"
-              ? "Gitee 授权已失效"
-              : payload.gitee.status === "unavailable"
-                ? "Gitee 暂不可达"
-                : null,
-          );
-          setUniformDetail(
-            payload.gitee.status === "unavailable" ? (payload.gitee.detail ?? "上游没有给出原因。") : null,
-          );
-          setReconnect(false);
-          return;
-        } catch (error) {
-          // 会话失效或后端不可达都退回样例清单：这一屏不说谎，角标里不写「已连上」。
-          if (error instanceof UnauthenticatedError) {
-            forgetSession();
-            if (alive) setHasSession(false);
-          }
-          if (alive) {
-            setAuth(null);
-            setConnected(null);
-            setUniformNote(null);
-            setUniformDetail(null);
-            setReconnect(true);
-          }
+    /** 手动顺序与放置记录每轮重读：刚拖过的卡不能被上一轮的内存副本覆盖（ADR-0007、ADR-0009）。 */
+    function localRecords() {
+      const records = { manualOrder: loadManualOrder(), placements: loadLearningRecords() };
+      if (alive) setHasLocal(hasLocalRecords());
+      return records;
+    }
+
+    /** 只有这一轮整家真的取到数的才推进时刻；失败家与被摘掉一档的家保持原值，水印才停得住。 */
+    function rememberGood(list: TodayList, providers: readonly Provider[], holdBack: ReadonlySet<string> = new Set()): void {
+      for (const provider of providers) {
+        if (!list.failures.includes(provider.id) && !holdBack.has(provider.id)) {
+          lastGoodAt.set(provider.id, list.generatedAt);
         }
       }
-      // 没有会话（或会话已失效）：先看公开演示快照——首次访客落地即真实数据（#15）。
-      if (API_BASE !== "") {
-        try {
-          const snapshot = await fetchDemoItems(API_BASE);
-          const providers: Provider[] = [];
-          if (snapshot.connected.github) providers.push(createGithubProvider());
-          if (snapshot.connected.gitee) providers.push(createGiteeProvider());
-          const next = await buildTodayList({
-            providers,
-            http: createSnapshotHttp(snapshot.items, snapshot.gitee),
-            // 排序基准取快照时刻：访客看到的是那一轮取数的切片，不是「刚刚」。
-            now: () => new Date(snapshot.generatedAt),
-            scope,
-            zoneOffsetMinutes,
-            sameEvent: demoSameEvent,
-            ...local,
-          });
-          if (!alive) return;
-          setList(next);
-          setConnected(snapshot.connected);
-          setDemo(true);
+    }
+
+    async function runLive(session: string, initial: boolean): Promise<boolean> {
+      let payload: ItemsPayload;
+      try {
+        // 上一轮的 id 交给服务端向源站确认：活跃视图不再返回的卡片才有机会收敛掉。
+        payload = await fetchItems(API_BASE, session, previousIdsOf(previous));
+      } catch (error) {
+        if (error instanceof UnauthenticatedError) {
+          forgetSession();
+          if (!alive) return false;
+          setHasSession(false);
           setAuth(null);
-          setUniformNote(null);
-          setUniformDetail(null);
-          return;
-        } catch {
-          // 演示快照也不可用就退回样例；这一屏仍不空白。
+          // 会话都没了：保留上一屏，但角标必须说「重新连接」，不能静默空列表。
+          setRefreshNote(null);
+          setReconnect(true);
+          return false;
         }
+        if (!alive) return false;
+        if (!initial) {
+          // 网络 / 服务端抖动不该把已显示的清单换成空屏，也不该伪装成「今天没有任务」。
+          setRefreshNote("刷新失败，显示上一轮快照");
+          return false;
+        }
+        setAuth(null);
+        setConnected(null);
+        setProblems([]);
+        setReconnect(true);
+        return false;
       }
+
+      // 服务端这一轮重新报 ok，才说明那一家真的接回来了；否则授权失效要在角标上留到重新授权。
+      if (payload.github.status === "ok") expired.delete("github");
+      if (payload.github.status === "reauth") expired.add("github");
+      if (payload.gitee.status === "ok") expired.delete("gitee");
+      if (payload.gitee.status === "reauth") expired.add("gitee");
+      for (const tier of payload.auth.dropped) droppedTiers.add(tier);
+      for (const tier of [...droppedTiers]) {
+        if (payload.auth.grants[tier] !== undefined) droppedTiers.delete(tier);
+      }
+      // 某一档被摘掉但另一档还能用时，GitHub 整家不算「整轮成功」：最后成功时刻不前进，
+      // 那一档的旧卡才不会在下一轮被盖上更晚的水印。
+      if (payload.github.status === "none" && droppedTiers.size > 0) expired.add("github");
+
+      const local = localRecords();
+      const providers = providersFromPayload(payload, expired);
+      const next = await buildRound({
+        providers,
+        githubItems: payload.items,
+        giteeItems: payload.gitee.items,
+        githubPrevious: payload.github.previous,
+        giteePrevious: payload.gitee.previous,
+        failed: failuresFrom(payload, expired),
+        now: new Date(),
+        scope: { assignee: payload.login },
+        zoneOffsetMinutes,
+        previous,
+        lastGoodAt,
+        ...local,
+      });
+      if (!alive) return true;
+      rememberGood(next, providers, droppedTiers.size > 0 ? new Set(["github"]) : new Set());
+      previous = next;
+      setList(next);
+      setAuth(payload.auth);
+      setConnected(payload.connected);
+      setDemo(false);
+      setProblems(problemsFrom(payload, expired, droppedTiers));
+      setRefreshNote(null);
+      setReconnect(false);
+      return true;
+    }
+
+    async function runDemo(initial: boolean): Promise<boolean> {
+      let snapshot: DemoPayload;
+      try {
+        snapshot = await fetchDemoItems(API_BASE);
+      } catch {
+        if (alive && !initial) setRefreshNote("刷新失败，显示上一轮快照");
+        return false;
+      }
+      const providers = providersFrom(snapshot.connected);
+      const local = localRecords();
+      const base = {
+        providers,
+        githubItems: snapshot.items,
+        giteeItems: snapshot.gitee,
+        // 排序基准取快照时刻：访客看到的是那一轮取数的切片，不是「刚刚」。
+        now: new Date(snapshot.generatedAt),
+        scope,
+        zoneOffsetMinutes,
+        lastGoodAt,
+        manualOrder: local.manualOrder,
+        placements: local.placements,
+      };
+      let next = await buildRound({ ...base, previous, failed: [] });
+      rememberGood(next, providers);
+      const forcedHere = forcedFailure !== null && providers.some((provider) => provider.id === forcedFailure);
+      if (forcedHere) {
+        // 先成功建一轮、再让选中的一家失败：水印来自真实快照，不是手写的假数据。
+        next = await buildRound({ ...base, previous: next, failed: [forcedFailure] });
+        rememberGood(next, providers);
+      }
+      if (!alive) return true;
+      previous = next;
+      setList(next);
+      setConnected(snapshot.connected);
+      setDemo(true);
+      setAuth(null);
+      setProblems(
+        forcedHere && forcedFailure !== null
+          ? [{ providerId: forcedFailure, kind: "unavailable", detail: "演示：模拟这一家取数失败。" }]
+          : [],
+      );
+      setRefreshNote(null);
+      return true;
+    }
+
+    async function runSample(): Promise<void> {
+      const local = localRecords();
       const next = await buildTodayList({
         providers: sampleProviders,
         http: sampleHttp,
         now: () => new Date(),
         scope,
         zoneOffsetMinutes,
-        // 演示用判定表：真实判据留给语义匹配（tracker 里还没有这张票），接进来的是同一个注入点，不是另一套逻辑。
         sameEvent: demoSameEvent,
         ...local,
       });
       if (!alive) return;
+      previous = next;
       setList(next);
       setConnected(null);
       setDemo(false);
-      setUniformNote(null);
-      setUniformDetail(null);
+      setAuth(null);
+      setProblems([]);
+      setRefreshNote(null);
     }
 
-    load();
+    async function refresh(initial: boolean): Promise<void> {
+      if (busy || !alive) return;
+      busy = true;
+      if (!initial) setRefreshing(true);
+      try {
+        if (mode === "live") {
+          const session = adoptSessionFromUrl();
+          if (session !== null) {
+            await runLive(session, false);
+            return;
+          }
+          // 会话在这台浏览器里已经没了：这条链路走不下去，退回公开快照；角标仍留着重新连接。
+          // 数据源换了，上一轮是访客自己的清单，不能带进公开演示屏——否则私人卡片会被当成演示数据留着。
+          previous = null;
+          lastGoodAt.clear();
+          expired.clear();
+          droppedTiers.clear();
+          if (await runDemo(false)) {
+            mode = "demo";
+            setDataMode("demo");
+          }
+          return;
+        }
+        if (mode === "demo") {
+          await runDemo(false);
+          return;
+        }
+        if (mode === "sample") return;
+
+        // 首屏才决定数据源：有会话走真实链路，否则公开演示快照，再不行才样例。
+        const session = API_BASE === "" ? null : adoptSessionFromUrl();
+        if (session !== null) {
+          setHasSession(true);
+          if (await runLive(session, true)) {
+            mode = "live";
+            setDataMode("live");
+            return;
+          }
+        }
+        if (API_BASE !== "" && (await runDemo(true))) {
+          mode = "demo";
+          setDataMode("demo");
+          return;
+        }
+        await runSample();
+        mode = "sample";
+        setDataMode("sample");
+      } finally {
+        busy = false;
+        if (alive && !initial) setRefreshing(false);
+      }
+    }
+
+    refreshRef.current = () => void refresh(false);
+    void refresh(true);
+
+    const poll = (): void => {
+      if (document.visibilityState === "visible") void refresh(false);
+    };
+    const timer = window.setInterval(poll, POLL_MS);
+    document.addEventListener("visibilitychange", poll);
     return () => {
       alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
     };
   }, []);
 
@@ -377,15 +689,32 @@ export function App() {
   // 本轮取数里被 401 摘掉的档更急：私有条目已经少了几条，角标先说这个。
   const authNote =
     auth === null ? null : auth.dropped.length > 0 ? "授权已失效" : scopeGap ? "实际授权已缩小" : null;
-  // 两家的问题都收进同一个入口：常态安静，出问题时角标说得出是哪一家。
-  const tierNote = [authNote, uniformNote].filter((one): one is string => one !== null).join(" · ") || null;
+  // 角标已经点名 GitHub 的问题时，「授权档位」按钮不再重复同一句。
+  const tierNote = problems.some((problem) => problem.providerId === "github") ? null : authNote;
+  const giteeProblem = problems.find((problem) => problem.providerId === "gitee");
+  const connectedAny = connected !== null && Object.values(connected).some(Boolean);
+  // 会话没了、一家都没接上、或有授权问题：空清单要说得像「去处理授权」，不能像「今天没事」。
+  const blockedEmpty =
+    reconnect ||
+    (connected !== null && !connectedAny) ||
+    problems.some((problem) => problem.kind === "reauth" || problem.kind === "scope");
+  const emptyMessage = blockedEmpty
+    ? problems.some((problem) => problem.kind === "scope")
+      ? "权限还没授予。按右下角重新授权后再刷新。"
+      : "授权不可用。按右下角重新连接后再刷新。"
+    : problems.length > 0
+      ? "这一轮没有可显示的任务，原因在右下角。"
+      : "今天没有指派给你的任务。";
 
   return (
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
-      <ol className="cards">
+      {list.entries.length === 0 ? (
+        <p className={blockedEmpty ? "empty-state empty-state--blocked" : "empty-state"}>{emptyMessage}</p>
+      ) : (
+        <ol className="cards">
         {list.entries.map((entry, index) => {
-          const { task, reason, learned, mergedFrom } = entry;
+          const { task, reason, learned, mergedFrom, snapshotAt } = entry;
           // 合并卡的来源槽一格一个来源，各自跳到各自的记录；没合并的卡片 DOM 不变。
           const sources = mergedFrom ?? [task];
           // 合并卡只解释表头这一条，其余来源以一句标注带出（#8 AC#5）——各写一条就是另一件事了。
@@ -410,7 +739,7 @@ export function App() {
                 : " card--dropBefore";
           return (
             <li
-              className={`card card--${reason}${drag?.from === index ? " card--dragging" : ""}${dropClass}`}
+              className={`card card--${reason}${snapshotAt === undefined ? "" : " card--stale"}${drag?.from === index ? " card--dragging" : ""}${dropClass}`}
               key={task.id}
               draggable
               onDragStart={(event) => {
@@ -431,6 +760,9 @@ export function App() {
               }}
               onDragEnd={() => setDrag(null)}
             >
+              {snapshotAt !== undefined && (
+                <span className="card-snapshot">来自 {WALL_CLOCK.format(new Date(snapshotAt))} 快照</span>
+              )}
               {/* 卡片本身是拖拽源：链接上的 draggable=false 让指针落在标题上时也从整张卡起手，
                   点击跳转不受影响（拖与点是两个手势）。 */}
               <a className="card-title" href={task.url} draggable={false}>
@@ -484,7 +816,8 @@ export function App() {
             </li>
           );
         })}
-      </ol>
+        </ol>
+      )}
       {/*
         状态信息只有一个位置：右下角。来源名写在这里，卡片上只写自己那一家。
         角标列的是本轮接线的家，顺序取注册顺序而不是清单项次：按清单排的话，一家被收敛到零条时它连名字一起消失。
@@ -507,6 +840,34 @@ export function App() {
         {demo && (
           <>
             演示账号
+            {" · "}
+          </>
+        )}
+        {!reconnect && problems.length > 0 && (
+          <>
+            {problems.map((problem) => (
+              <span key={problem.providerId}>
+                {problem.kind === "unavailable" ? (
+                  <span className="corner-alert" title={problem.detail}>
+                    {problemLabel(problem)}
+                  </span>
+                ) : (
+                  <button
+                    className="corner-link corner-link--alert"
+                    onClick={() => openDialog("tiers")}
+                    type="button"
+                  >
+                    {problemLabel(problem)} · {problem.kind === "scope" ? "重新授权" : "重新连接"}
+                  </button>
+                )}
+                {" · "}
+              </span>
+            ))}
+          </>
+        )}
+        {refreshNote !== null && (
+          <>
+            <span className="corner-alert">{refreshNote}</span>
             {" · "}
           </>
         )}
@@ -538,6 +899,14 @@ export function App() {
           <>
             <button className="corner-link" onClick={() => openDialog("clear-local")} type="button">
               清除本地记录
+            </button>
+            {" · "}
+          </>
+        )}
+        {(dataMode === "live" || dataMode === "demo") && (
+          <>
+            <button className="corner-link" disabled={refreshing} onClick={() => refreshRef.current()} type="button">
+              {refreshing ? "刷新中…" : "刷新"}
             </button>
             {" · "}
           </>
@@ -695,12 +1064,12 @@ export function App() {
                         {wired ? `${uniformConnected ? "已连接" : "未连接"} · ` : ""}
                         {descriptor.auth.note}
                       </span>
-                      {wired && uniformNote !== null && (
+                      {wired && giteeProblem !== undefined && (
                         <span className="tier-warn">
-                          {uniformNote}
-                          {uniformDetail === null
-                            ? "：access token 一天过期，自动续期没成功后需要重新授权。"
-                            : `：${uniformDetail}`}
+                          {problemLabel(giteeProblem)}
+                          {giteeProblem.kind === "unavailable"
+                            ? `：${giteeProblem.detail ?? "上游没有给出原因。"}`
+                            : "：access token 一天过期，自动续期没成功后需要重新授权。"}
                         </span>
                       )}
                     </div>

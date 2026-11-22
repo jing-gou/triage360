@@ -400,6 +400,111 @@ describe("seam 1 · 下一轮构建", () => {
   });
 });
 
+describe("seam 1 · 一家失败不拖白整轮", () => {
+  const github = createGithubLikeProvider();
+  const jira = createJiraLikeProvider();
+
+  it("失败的 provider 保留上一轮条目并标出快照时刻，其余家照常刷新", async () => {
+    const firstRound = fakeHttp({
+      github: { view: [issue(4001, "旧 GitHub 条目", "open", "2026-11-16T08:00:00Z")] },
+      jira: { view: [ticket("10061", "TRI-61", "旧 Jira 条目", "In Progress", "2026-11-16T09:00:00.000+0800")] },
+    });
+    const round1 = await buildTodayList({ providers: [github, jira], http: firstRound, now: clock, scope });
+    expect(round1.failures).toEqual([]);
+
+    // 第二轮 Jira 的取数直接抛错；GitHub 正常返回新标题。
+    const secondRound = fakeHttp({
+      github: { view: [issue(4001, "新 GitHub 条目", "open", "2026-11-17T09:30:00Z")] },
+    });
+    const round2 = await buildTodayList({
+      providers: [github, jira],
+      http: secondRound,
+      now: () => new Date("2026-11-17T10:00:00+08:00"),
+      scope,
+      previous: round1.entries.map((entry) => entry.task),
+      previousGeneratedAt: round1.generatedAt,
+    });
+
+    expect(round2.failures).toEqual(["jira"]);
+    expect(round2.entries.map((entry) => entry.task.title)).toContain("新 GitHub 条目");
+    expect(round2.entries.find((entry) => entry.task.providerId === "github")?.snapshotAt).toBeUndefined();
+    const stale = round2.entries.find((entry) => entry.task.providerId === "jira");
+    expect(stale?.task.title).toBe("旧 Jira 条目");
+    expect(stale?.snapshotAt).toBe(round1.generatedAt);
+  });
+
+  it("provider 这一轮成功、但旧条目按 id 没确认时，也带上一次成功取数的水印", async () => {
+    const firstRound = fakeHttp({
+      github: { view: [issue(4003, "只剩一条旧卡", "open", "2026-11-16T08:00:00Z")] },
+    });
+    const round1 = await buildTodayList({ providers: [github], http: firstRound, now: clock, scope });
+
+    // 第二轮活跃视图没返回它，按 id 补取也没回来：条目要留下，但不能假装它是这一轮的新鲜数据。
+    const secondRound = fakeHttp({ github: { view: [], byId: [] } });
+    const round2 = await buildTodayList({
+      providers: [github],
+      http: secondRound,
+      now: () => new Date("2026-11-17T10:00:00+08:00"),
+      scope,
+      previous: round1.entries.map((entry) => entry.task),
+      previousGeneratedAt: round1.generatedAt,
+    });
+
+    expect(round2.failures).toEqual([]);
+    expect(round2.entries[0]?.task.title).toBe("只剩一条旧卡");
+    expect(round2.entries[0]?.snapshotAt).toBe(round1.generatedAt);
+  });
+
+  it("连续失败时水印停在最后一次成功取数的时刻，不被后一轮的生成时间覆盖", async () => {
+    const firstRound = fakeHttp({
+      github: { view: [issue(4002, "GitHub 条目", "open", "2026-11-16T08:00:00Z")] },
+      jira: { view: [ticket("10062", "TRI-62", "Jira 条目", "In Progress", "2026-11-16T09:00:00.000+0800")] },
+    });
+    const round1 = await buildTodayList({ providers: [github, jira], http: firstRound, now: clock, scope });
+
+    const secondRound = fakeHttp({
+      github: { view: [issue(4002, "GitHub 条目", "open", "2026-11-17T09:30:00Z")] },
+    });
+    const round2 = await buildTodayList({
+      providers: [github, jira],
+      http: secondRound,
+      now: () => new Date("2026-11-17T10:00:00+08:00"),
+      scope,
+      previous: round1.entries.map((entry) => entry.task),
+      previousGeneratedAt: round1.generatedAt,
+    });
+    const staleJira = round2.entries.find((entry) => entry.task.providerId === "jira");
+    expect(staleJira?.snapshotAt).toBe(round1.generatedAt);
+
+    const thirdRound = fakeHttp({
+      github: { view: [issue(4002, "GitHub 条目", "open", "2026-11-17T09:45:00Z")] },
+    });
+    const round3 = await buildTodayList({
+      providers: [github, jira],
+      http: thirdRound,
+      now: () => new Date("2026-11-17T11:00:00+08:00"),
+      scope,
+      previous: round2.entries.map((entry) => entry.task),
+      previousGeneratedAt: round2.generatedAt,
+      previousSnapshotAt: staleJira?.snapshotAt === undefined ? {} : { [staleJira.task.id]: staleJira.snapshotAt },
+    });
+
+    expect(round3.failures).toEqual(["jira"]);
+    expect(round3.entries.find((entry) => entry.task.providerId === "jira")?.snapshotAt).toBe(round1.generatedAt);
+  });
+
+  it("没有上一轮可保留时，失败家不拖白其余家", async () => {
+    const onlyGithub = fakeHttp({
+      github: { view: [issue(4003, "首轮 GitHub 条目", "open", "2026-11-17T08:00:00Z")] },
+    });
+    const list = await buildTodayList({ providers: [github, jira], http: onlyGithub, now: clock, scope });
+
+    expect(list.failures).toEqual(["jira"]);
+    expect(list.entries.map((entry) => entry.task.title)).toEqual(["首轮 GitHub 条目"]);
+    expect(list.entries[0]?.snapshotAt).toBeUndefined();
+  });
+});
+
 describe("seam 1 · Gitee 与飞书 的形状差异", () => {
   it("同一数字在两个仓库里是两张卡：远端 id 带仓库段", async () => {
     const gitee = createGiteeLikeProvider();
