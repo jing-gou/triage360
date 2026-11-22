@@ -22,7 +22,7 @@ const SYSTEM_PROMPT = [
   "只输出那一句话：不要标题、列表、Markdown 或引号。",
 ].join("\n");
 
-/** 面板传来的 card 逐字段校验：只收标题、标签与更新时间，别的键一律丢掉。 */
+/** 面板传来的 card 逐字段校验：只收标题与标签，别的键一律丢掉（缓存键只在浏览器那侧）。 */
 export function parseSummaryCard(value: unknown): SummaryCard | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;

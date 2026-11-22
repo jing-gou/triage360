@@ -45,7 +45,7 @@ related:
 Provider 抽象做成**内部统一契约**（不开放第三方插件）：
 
 ```
-search()  getByIds()  normalize()  doneStates  deletedStates  pollIntervalMs  scopeDescriptor
+search()  getByIds()  normalize()  labels()  doneStates  deletedStates  pollIntervalMs  scopeDescriptor
 ```
 
 `scopeDescriptor` 是必需字段——Q36 证明"公私粒度"在各平台根本不对称（GitHub 有、Gitee/Jira 没有），硬编码会让这个差异散落到每个 `if` 里。`normalize()` 必须在阶段 1 定稿，否则阶段 3 的跨平台重复项合并会建在各自原始字段上。

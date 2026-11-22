@@ -1,6 +1,11 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Provider, RawItem } from "../src/core/provider";
+import {
+  SUMMARY_CONCURRENCY,
+  SUMMARY_LIMIT,
+  summaryKeyOf as taskSummaryKey,
+} from "../src/core/summary-card";
 import { createGiteeProvider } from "../src/providers/gitee";
 import { createGithubProvider } from "../src/providers/github";
 import type { DemoConfig, ServerConfig } from "./config";
@@ -27,9 +32,6 @@ export interface DemoSnapshot {
   summaries: Record<string, string>;
 }
 
-/** 一次预生成的上限与并发：与「AI 提炼」按钮的 ≤20 条对齐，别让定时器一次打爆模型配额。 */
-const SUMMARY_LIMIT = 20;
-const SUMMARY_CONCURRENCY = 3;
 
 
 export class DemoRefresher {
@@ -139,11 +141,11 @@ export class DemoRefresher {
       Object.entries(snapshot.summaries).filter(([key]) => keep.has(key)),
     );
 
-    const open = (one: { raw: RawItem }, provider: Provider): boolean =>
+    const notDone = (one: { raw: RawItem }, provider: Provider): boolean =>
       !new Set(provider.doneStates()).has(String(one.raw.state ?? ""));
     const todo = [
-      ...github.filter((one) => open(one, githubProvider)),
-      ...gitee.filter((one) => open(one, giteeProvider)),
+      ...github.filter((one) => notDone(one, githubProvider)),
+      ...gitee.filter((one) => notDone(one, giteeProvider)),
     ]
       .filter((one): one is { raw: RawItem; provider: Provider; key: string } => one.key !== null && snapshot.summaries[one.key] === undefined)
       .sort((a, b) => String(b.raw.updated_at ?? "").localeCompare(String(a.raw.updated_at ?? "")))
@@ -206,8 +208,9 @@ export class DemoRefresher {
  * 与面板的 `summaryKey` 完全同一个口径（provider + issue_id + updated_at）。
  */
 function summaryKeyOf(provider: Provider, raw: RawItem): string | null {
-  const updated = raw.updated_at;
-  if (typeof updated !== "string") return null;
-  const at = new Date(updated);
-  return Number.isNaN(at.getTime()) ? null : `${provider.normalize(raw).id}@${at.toISOString()}`;
+  try {
+    return taskSummaryKey(provider.normalize(raw));
+  } catch {
+    return null;
+  }
 }

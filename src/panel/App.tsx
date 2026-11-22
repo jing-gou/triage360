@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { createSnapshotHttp, type SnapshotFailure } from "./snapshot-http";
 import { cachedSummary, rememberSummary, summaryKey } from "./summary-cache";
+import { SUMMARY_CONCURRENCY, SUMMARY_LIMIT } from "../core/summary-card";
 import type { ReasonCard } from "../core/reason-card";
 import { appendLearningRecord, loadLearningRecords } from "./learning-records";
 import { clearLocalRecords, hasLocalRecords } from "./local-records";
@@ -267,7 +268,7 @@ const RULE_WORDINGS: Record<RuleId, string> = {
 /** 一张卡被问过「为什么」之后的状态：加载中，或者一句话（AI 措辞 / 规则回落）。 */
 type WhyState = { status: "loading" } | { status: "ready"; text: string };
 /** 「AI 提炼」的卡片状态：与 why 同一个形状，但键是 `task.id@updatedAt`（源站一更新就自动失效）。 */
-type SummaryState = { status: "loading" } | { status: "ready"; text: string };
+type SummaryState = WhyState;
 
 /** 首次主动排序后要说的话：动了哪一条、从第几位到第几位。 */
 interface OrderNotice {
@@ -313,6 +314,8 @@ export function App() {
   /** 「AI 提炼」的结果；键带 updatedAt，源站更新后旧摘要自然不再命中。 */
   const [summaries, setSummaries] = useState<Record<string, SummaryState>>({});
   const [summarizing, setSummarizing] = useState(false);
+  /** 这一轮没提炼出来的张数：解析失败、超时或上游故障都算，给用户一句可见的反馈。 */
+  const [summaryNote, setSummaryNote] = useState<string | null>(null);
   /** 演示屏没有会话，摘要由服务端刷新时预生成（#20）；没有它就藏起按钮。 */
   const [demoSummaries, setDemoSummaries] = useState<Record<string, string> | null>(null);
   // 拖拽会把在途请求的答案作废：请求发出时记下代数，回来时代数变了就丢掉，不把旧句写回手动区。
@@ -640,16 +643,19 @@ export function App() {
    */
   async function summarize(): Promise<void> {
     if (list === null || summarizing) return;
-    const cards = list.entries.slice(0, 20);
+    const cards = list.entries.slice(0, SUMMARY_LIMIT);
     setSummarizing(true);
+    setSummaryNote(null);
     try {
       if (demoSummaries !== null) {
         const ready: Record<string, SummaryState> = {};
         for (const entry of cards) {
-          const text = demoSummaries[`${entry.task.url}@${entry.task.updatedAt}`];
+          const text = demoSummaries[summaryKey(entry.task)];
           if (text !== undefined) ready[summaryKey(entry.task)] = { status: "ready", text };
         }
         setSummaries((one) => ({ ...one, ...ready }));
+        const missing = cards.length - Object.keys(ready).length;
+        if (missing > 0) setSummaryNote(`${missing} 张卡的演示摘要还没生成，下一轮刷新后再试。`);
         return;
       }
       const session = live ? adoptSessionFromUrl() : null;
@@ -665,6 +671,7 @@ export function App() {
         return next;
       });
       let cursor = 0;
+      let failed = 0;
       const worker = async (): Promise<void> => {
         for (;;) {
           const chunk = pending[cursor++];
@@ -684,6 +691,7 @@ export function App() {
               setAuth(null);
               setReconnect(true);
             }
+            failed += 1;
             setSummaries((one) => {
               const { [key]: _dropped, ...rest } = one;
               return rest;
@@ -691,7 +699,8 @@ export function App() {
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
+      await Promise.all(Array.from({ length: Math.min(SUMMARY_CONCURRENCY, pending.length) }, worker));
+      if (failed > 0) setSummaryNote(`${failed} 张卡这次没有提炼出来，稍后再试。`);
     } finally {
       setSummarizing(false);
     }
@@ -822,8 +831,9 @@ export function App() {
           </button>
           <span className="ai-note">
             AI 只看得到标题和标签，看不到正文和评论
-            {list !== null && list.entries.length > 20 ? "；一次最多 20 张卡" : ""}
+            {list !== null && list.entries.length > SUMMARY_LIMIT ? `；一次最多 ${SUMMARY_LIMIT} 张卡` : ""}
           </span>
+          {summaryNote !== null && <span className="ai-note ai-note--alert">{summaryNote}</span>}
         </p>
       )}
       {fullViewOpen && hasFullView ? (

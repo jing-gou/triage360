@@ -501,6 +501,10 @@ a.card-source:hover {
   font-size: calc(12px * var(--site-type, 1));
 }
 
+.ai-note--alert {
+  color: var(--alert);
+}
+
 .card-summary {
   margin: calc(6px * var(--site-space, 1)) 0 0;
   color: var(--ink);

@@ -1,4 +1,5 @@
 import type { Task } from "../core/provider";
+import { summaryKeyOf } from "../core/summary-card";
 
 /**
  * 「AI 提炼」的本机缓存（#20）：键是 provider + issue_id + updated_at。
@@ -9,9 +10,7 @@ import type { Task } from "../core/provider";
 const PREFIX = "triage360:summary:v1:";
 const MAX_ENTRIES = 300;
 
-export function summaryKey(task: Task): string {
-  return `${task.id}@${task.updatedAt}`;
-}
+export const summaryKey = summaryKeyOf;
 
 export function cachedSummary(task: Task): string | null {
   try {
