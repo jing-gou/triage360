@@ -1,6 +1,8 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { labelNames, type RawItem } from "../src/core/provider";
+import { createGiteeProvider } from "../src/providers/gitee";
+import { createGithubProvider } from "../src/providers/github";
 import type { DemoConfig, ServerConfig } from "./config";
 import type { EncryptedStore } from "./store";
 import { Upstream } from "./upstream";
@@ -28,8 +30,7 @@ export interface DemoSnapshot {
 /** 一次预生成的上限与并发：与「AI 提炼」按钮的 ≤20 条对齐，别让定时器一次打爆模型配额。 */
 const SUMMARY_LIMIT = 20;
 const SUMMARY_CONCURRENCY = 3;
-/** 这些状态不生成摘要：演示屏只展示未完成卡片。 */
-const DONE_STATES = new Set(["closed", "rejected", "finished", "merged"]);
+
 
 export class DemoRefresher {
   private readonly file: string;
@@ -126,14 +127,19 @@ export class DemoRefresher {
    */
   private async fillSummaries(snapshot: DemoSnapshot): Promise<void> {
     if (this.config.deepseek.apiKey === "") return;
-    const raws = [...snapshot.items, ...snapshot.gitee];
-    const keep = new Set(raws.map(summaryKeyOf).filter((key): key is string => key !== null));
+    const all = [...snapshot.items, ...snapshot.gitee];
+    const keep = new Set(all.map(summaryKeyOf).filter((key): key is string => key !== null));
     snapshot.summaries = Object.fromEntries(
       Object.entries(snapshot.summaries).filter(([key]) => keep.has(key)),
     );
 
-    const todo = raws
-      .filter((raw) => !DONE_STATES.has(String(raw.state ?? "")))
+    // 完成态的判定跟构建器同一处来：provider 的 doneStates，不在这里再抄一份平台字面量。
+    const githubDone = new Set(createGithubProvider().doneStates());
+    const giteeDone = new Set(createGiteeProvider().doneStates());
+    const todo = [
+      ...snapshot.items.filter((raw) => !githubDone.has(String(raw.state ?? ""))),
+      ...snapshot.gitee.filter((raw) => !giteeDone.has(String(raw.state ?? ""))),
+    ]
       .map((raw) => ({ raw, key: summaryKeyOf(raw) }))
       .filter((one): one is { raw: RawItem; key: string } => one.key !== null && snapshot.summaries[one.key] === undefined)
       .sort((a, b) => String(b.raw.updated_at ?? "").localeCompare(String(a.raw.updated_at ?? "")))
