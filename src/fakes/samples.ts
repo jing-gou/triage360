@@ -41,7 +41,10 @@ function demoDue(daysFromToday: number): string {
  * （`giteeLikeProvider.ts` 的 140），GitHub 侧没有对应条目，所以画面演的是上面这一对；
  * 票面那一对的字面在 seam 测试里跑过（`tests/dedup.test.ts`）。
  */
-const DEMO_SAME_EVENT: readonly [string, string][] = [["github:1041", "gitee:jing-gou/triage360#313"]];
+const DEMO_SAME_EVENT: readonly [string, string][] = [
+  ["github:1041", "gitee:jing-gou/triage360#313"],
+  ["github:jing-gou/triage360#54", "gitee:sugarpub/triage360-demo#IKX5K3"],
+];
 
 export const demoSameEvent: SameEvent = (a, b) =>
   DEMO_SAME_EVENT.some(([x, y]) => (a.id === x && b.id === y) || (a.id === y && b.id === x));
