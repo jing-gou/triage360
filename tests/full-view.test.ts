@@ -25,7 +25,7 @@ const OPEN = [
   ...Array.from({ length: 10 }, (_, index) => issue(3010 + index, `普通的一条 ${index + 1}`, "open", "2026-11-15T10:00:00Z")),
 ];
 
-/** 71 条已完成：只该出现在全量视图里。 */
+/** 71 条已完成：只该出现在完整视图里。 */
 const DONE = Array.from({ length: 71 }, (_, index) =>
   issue(4001 + index, `已完成 ${index + 1}`, "closed", "2026-11-14T10:00:00Z"),
 );
@@ -44,8 +44,8 @@ function countingHttp(view: unknown[]): { http: Http; calls: () => number } {
   };
 }
 
-describe("seam 1 · 全量视图（对照 83 条）", () => {
-  it("83 条源站条目里，今日清单仍只留 12 条未完成，全量视图把 71 条已完成也列出来", async () => {
+describe("seam 1 · 完整视图（对照 83 条）", () => {
+  it("83 条源站条目里，今日清单仍只留 12 条未完成，完整视图把 71 条已完成也列出来", async () => {
     const list = await buildTodayList({
       providers: [createGithubLikeProvider()],
       http: countingHttp(ALL).http,
@@ -56,7 +56,7 @@ describe("seam 1 · 全量视图（对照 83 条）", () => {
     expect(list.entries).toHaveLength(12);
     expect(list.full).toHaveLength(83);
     expect(list.full.filter((entry) => entry.done)).toHaveLength(71);
-    // 今日清单里的每一条在全量视图里都标记为未完成。
+    // 今日清单里的每一条在完整视图里都标记为未完成。
     expect(
       list.entries.every((entry) => list.full.find((one) => one.task.id === entry.task.id)?.done === false),
     ).toBe(true);
@@ -65,7 +65,7 @@ describe("seam 1 · 全量视图（对照 83 条）", () => {
     expect(list.entries[1]?.reason).toBe("dueToday");
   });
 
-  it("83 条全量视图仍然只有一轮取数：一次批量，不是逐条", async () => {
+  it("83 条完整视图仍然只有一轮取数：一次批量，不是逐条", async () => {
     const counted = countingHttp(ALL);
 
     await buildTodayList({
@@ -78,7 +78,7 @@ describe("seam 1 · 全量视图（对照 83 条）", () => {
     expect(counted.calls()).toBe(1);
   });
 
-  it("全量视图把未完成排在已完成前面，两组内部沿用同一套档位与更新时间序", async () => {
+  it("完整视图把未完成排在已完成前面，两组内部沿用同一套档位与更新时间序", async () => {
     const shuffled = [
       issue(5001, "已完成较早", "closed", "2026-11-10T00:00:00Z"),
       issue(5002, "未完成较旧", "open", "2026-11-12T00:00:00Z"),

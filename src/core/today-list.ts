@@ -54,8 +54,8 @@ export interface TodayList {
   generatedAt: string;
   entries: ListEntry[];
   /**
-   * 源站这一轮返回的全部条目，含已完成（#18 的「对照 83 条」）。
-   * 与 `entries` 同一套理由、排序只多一条「未完成在前」；不参与合并与拖拽——
+   * 源站这一轮仍在的全部条目，含已完成（#18 的「完整视图」）。
+   * 与 `entries` 同一套理由，排序只多一条「未完成在前」；不参与合并与拖拽——
    * 它是给人对照的只读视图，不是第二份今日清单。
    */
   full: FullEntry[];
@@ -66,9 +66,13 @@ export interface TodayList {
   failures: string[];
 }
 
-/** 全量视图里的一条：`done` 只在源站已完成时为真，今日清单从不带这个键。 */
-export interface FullEntry extends ListEntry {
+/** 完整视图里的一条：`done` 只在源站已完成时为真，今日清单里永远不会出现这种条目。 */
+export interface FullEntry {
+  task: Task;
+  reason: RuleId;
   done: boolean;
+  /** 这一条来自上一轮快照时的时刻；与清单条目的水印同一个含义。 */
+  snapshotAt?: string;
 }
 
 /**
@@ -153,11 +157,8 @@ export async function buildTodayList({
       batch.tasks.map((task) => {
         const group = sourceGroupOf(task);
         const hits = boost.get(group);
-        const snapshotAt = batch.snapshotAt.get(task.id);
         return {
-          task,
-          reason: ruleOf(task, instant, zoneOffsetMinutes),
-          ...(snapshotAt === undefined ? {} : { snapshotAt }),
+          ...baseEntry(task, batch, instant, zoneOffsetMinutes),
           ...(hits === undefined ? {} : { learned: { group, hits } }),
         };
       }),
@@ -171,35 +172,23 @@ export async function buildTodayList({
     (a, b) =>
       RANK[a.reason] - RANK[b.reason] ||
       (b.learned?.hits ?? 0) - (a.learned?.hits ?? 0) ||
-      byCode(b.task.updatedAt, a.task.updatedAt) ||
-      byCode(a.task.id, b.task.id),
+      compareByRecency(a, b),
   );
 
-  // 全量视图要判「这条在源站是不是已完成」；完成的定义只从 provider 来，不在核心层再抄一份。
-  const doneStates = new Map(
-    providers.map((provider) => [provider.id, new Set(provider.doneStates())] as const),
-  );
-
-  // 全量视图从同一轮取数里切出来：不额外发请求，也不参与合并与手动顺序（#18）。
+  // 完整视图从同一轮取数里切出来：不额外发请求，也不参与合并与手动顺序（#18）。
   const full: FullEntry[] = batches.flatMap((batch) =>
-    batch.all.map((task) => {
-      const snapshotAt = batch.snapshotAt.get(task.id);
-      return {
-        task,
-        reason: ruleOf(task, instant, zoneOffsetMinutes),
-        done: doneStates.get(task.providerId)?.has(task.state) ?? false,
-        ...(snapshotAt === undefined ? {} : { snapshotAt }),
-      };
-    }),
+    batch.present.map(({ task, done }) => ({
+      ...baseEntry(task, batch, instant, zoneOffsetMinutes),
+      done,
+    })),
   );
-  // 未完成在前、已完成在后，两组内部与今日清单同一套档位/更新时间/码元序：
-  // 展开视图的第一屏就是「今天该做什么」，往下的才是对照用的历史。
+  // 未完成在前、已完成在后，两组内部与今日清单同一套档位/更新时间/码元序。
+  // 这里刻意不接手动顺序与学习加权：完整视图照的是源站条目本身，拖过的顺序只属于今日清单。
   full.sort(
     (a, b) =>
       Number(a.done) - Number(b.done) ||
       RANK[a.reason] - RANK[b.reason] ||
-      byCode(b.task.updatedAt, a.task.updatedAt) ||
-      byCode(a.task.id, b.task.id),
+      compareByRecency(a, b),
   );
 
   return {
@@ -207,6 +196,21 @@ export async function buildTodayList({
     entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder),
     full,
     failures: batches.flatMap((batch) => (batch.failed ? [batch.providerId] : [])),
+  };
+}
+
+/** 一条任务在这一轮里的理由与水印：今日清单与完整视图共用这一处，避免各算一遍。 */
+function baseEntry(
+  task: Task,
+  batch: ProviderBatch,
+  instant: string,
+  zoneOffsetMinutes: number | undefined,
+): { task: Task; reason: RuleId; snapshotAt?: string } {
+  const snapshotAt = batch.snapshotAt.get(task.id);
+  return {
+    task,
+    reason: ruleOf(task, instant, zoneOffsetMinutes),
+    ...(snapshotAt === undefined ? {} : { snapshotAt }),
   };
 }
 
@@ -309,11 +313,16 @@ function byCode(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** 档内序：最近有动静的在前，同刻按 id 破平。今日清单与完整视图共用。 */
+function compareByRecency(a: { task: Task }, b: { task: Task }): number {
+  return byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id);
+}
+
 interface ProviderBatch {
   providerId: string;
   tasks: Task[];
-  /** 这一家这一轮返回的全部未删除条目，含已完成；`tasks` 是其中未完成的那部分。 */
-  all: Task[];
+  /** 这一轮源站仍在的条目（含已完成，不含已删除）；`tasks` 是其中未完成的那部分。 */
+  present: { task: Task; done: boolean }[];
   /** 任务 id → 它来自哪一刻的快照；成功取数的家为空。 */
   snapshotAt: ReadonlyMap<string, string>;
   failed: boolean;
@@ -340,14 +349,21 @@ async function buildOneSafely(
       const known = previousSnapshotAt?.[id] ?? previousGeneratedAt;
       if (known !== undefined) snapshotAt.set(id, known);
     }
-    return { providerId: provider.id, tasks: fresh.tasks, all: fresh.all, snapshotAt, failed: false };
+    return { providerId: provider.id, tasks: fresh.tasks, present: fresh.present, snapshotAt, failed: false };
   } catch {
     const snapshotAt = new Map<string, string>();
     for (const task of own) {
       const known = previousSnapshotAt?.[task.id] ?? previousGeneratedAt;
       if (known !== undefined) snapshotAt.set(task.id, known);
     }
-    return { providerId: provider.id, tasks: [...own], all: [...own], snapshotAt, failed: true };
+    return {
+      providerId: provider.id,
+      tasks: [...own],
+      // 失败家的条目来自上一轮，那一轮只留未完成的卡片：没有「源站已完成」可判。
+      present: own.map((task) => ({ task, done: false })),
+      snapshotAt,
+      failed: true,
+    };
   }
 }
 
@@ -356,11 +372,10 @@ async function buildOne(
   http: Http,
   scope: Scope,
   previous: readonly Task[],
-): Promise<{ tasks: Task[]; all: Task[]; unconfirmed: ReadonlySet<string> }> {
+): Promise<{ tasks: Task[]; present: { task: Task; done: boolean }[]; unconfirmed: ReadonlySet<string> }> {
   // 空数组 = 这个平台任何状态都不算完成/删除，条目一律留在清单里。
   const done = new Set(provider.doneStates());
   const deleted = new Set(provider.deletedStates());
-  const stillOpen = (task: Task) => !done.has(task.state) && !deleted.has(task.state);
 
   const seen = (await provider.search(scope, http)).map(provider.normalize);
 
@@ -371,11 +386,15 @@ async function buildOne(
   const carried =
     unseen.length === 0 ? { tasks: [], unconfirmed: new Set<string>() } : await carryOver(provider, http, unseen);
 
-  const all = [...seen, ...carried.tasks];
+  // 已完成与未完成用同一次 doneStates 判定：完整视图与水印都从这里读，不另判一遍。
+  // 已删除的连完整视图也不留：那是「源站没有了」，不是「做完了」。
+  const present = [...seen, ...carried.tasks]
+    .filter((task) => !deleted.has(task.state))
+    .map((task) => ({ task, done: done.has(task.state) }));
+
   return {
-    tasks: all.filter(stillOpen),
-    // 已删除的连全量视图也不留：那是「源站没有了」，不是「做完了」。
-    all: all.filter((task) => !deleted.has(task.state)),
+    tasks: present.filter((one) => !one.done).map((one) => one.task),
+    present,
     unconfirmed: carried.unconfirmed,
   };
 }

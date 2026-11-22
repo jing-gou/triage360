@@ -277,7 +277,7 @@ type Dialog = "consent" | "revoke" | "clear-local" | "tiers";
 
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
-  /** 全量对照视图（#18）：展开只切换渲染哪一份，取数在每一轮里早已完成，不会再发请求。 */
+  /** 完整视图（#18）：展开只切换渲染哪一份，取数在每一轮里早已完成，不会再发请求。 */
   const [expanded, setExpanded] = useState(false);
   const [notice, setNotice] = useState<OrderNotice | null>(null);
   const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
@@ -707,11 +707,16 @@ export function App() {
     : problems.length > 0
       ? "这一轮没有可显示的任务，原因在右下角。"
       : "今天没有指派给你的任务。";
+  // 完整视图的入口与计数都从这里读一次，不在 JSX 里各算一遍。
+  const doneCount = list.full.filter((entry) => entry.done).length;
+  const hasFull = connected !== null && doneCount > 0;
 
   return (
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
-      {list.full.length > list.entries.length && (
+      {/* 完整视图只在源站确实带回了已完成条目时出现；样例屏（connected === null）不给，
+          那一屏全是字面量，展开只会把样例当成对照数据。 */}
+      {hasFull && (
         <p className="view-toggle-row">
           <button
             aria-expanded={expanded}
@@ -719,22 +724,15 @@ export function App() {
             onClick={() => setExpanded(!expanded)}
             type="button"
           >
-            {expanded
-              ? `收起，回到今日清单（${list.entries.length} 条）`
-              : `展开完整视图（${list.full.length} 条）`}
+            {expanded ? "收起，回到今日清单" : `展开完整视图（${list.full.length} 条）`}
           </button>
-          {expanded && (
-            <span className="view-toggle-note">
-              含已完成 {list.full.filter((entry) => entry.done).length} 条；今日清单仍然只有{" "}
-              {list.entries.length} 条
-            </span>
-          )}
+          {expanded && <span className="view-toggle-note">含已完成 {doneCount} 条，未完成在前</span>}
         </p>
       )}
-      {expanded && list.full.length > list.entries.length ? (
+      {expanded && hasFull ? (
         <ol className="full-list">
           {list.full.map((entry) => {
-            const { task, reason, done } = entry;
+            const { task, reason, done, snapshotAt } = entry;
             const source = sourceLabel(task.providerId, connected);
             return (
               <li className={`full-item${done ? " full-item--done" : ""}`} key={`full-${task.id}`}>
@@ -745,6 +743,11 @@ export function App() {
                   <span className="card-source">{source.label}</span>
                   <span className="card-reason">{done ? "已完成" : REASON_LABELS[reason]}</span>
                   <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
+                  {snapshotAt !== undefined && (
+                    <span className="full-item-snapshot">
+                      来自 {WALL_CLOCK.format(new Date(snapshotAt))} 快照
+                    </span>
+                  )}
                 </span>
               </li>
             );

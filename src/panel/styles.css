@@ -393,7 +393,7 @@ a.card-source:hover {
   line-height: 1.5;
 }
 
-/* 全量对照视图（#18）：一个弱化入口，展开后是只读条目流，不参与拖拽。 */
+/* 完整视图（#18）：一个弱化入口，展开后是只读条目流，不参与拖拽。 */
 .view-toggle-row {
   display: flex;
   flex-wrap: wrap;
@@ -456,4 +456,8 @@ a.card-source:hover {
 
 .full-item--done .full-item-title {
   color: var(--muted);
+}
+
+.full-item-snapshot {
+  font-variant-numeric: tabular-nums;
 }
