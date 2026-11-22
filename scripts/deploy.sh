@@ -32,6 +32,10 @@ set +a
 if { [ -n "${GITEE_CLIENT_ID:-}" ] && [ -z "${GITEE_CLIENT_SECRET:-}" ]; } || { [ -z "${GITEE_CLIENT_ID:-}" ] && [ -n "${GITEE_CLIENT_SECRET:-}" ]; }; then
   die "GITEE_CLIENT_ID 与 GITEE_CLIENT_SECRET 必须成对"
 fi
+# 同一把尺子也量 Atlassian：写一半不是「没配 Jira」，是配错了。
+if { [ -n "${ATLASSIAN_CLIENT_ID:-}" ] && [ -z "${ATLASSIAN_CLIENT_SECRET:-}" ]; } || { [ -z "${ATLASSIAN_CLIENT_ID:-}" ] && [ -n "${ATLASSIAN_CLIENT_SECRET:-}" ]; }; then
+  die "ATLASSIAN_CLIENT_ID 与 ATLASSIAN_CLIENT_SECRET 必须成对"
+fi
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8787}
 # 加密存储与密钥的落点（#13）：密钥文件 store.key 与数据同目录，都只有服务账号能读。
@@ -80,7 +84,7 @@ log "npm ci + build:server"
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" ci
 run_as_app "$NPM_BIN" --prefix "$APP_DIR" --cache "$NPM_CACHE" run build:server
 
-# 4. 运行环境：基础键 + 可选 Gitee / 演示租户 / DeepSeek 行；root 600，内容没变就不碰文件。
+# 4. 运行环境：基础键 + 可选 Gitee / Atlassian / 演示租户 / DeepSeek 行；root 600，内容没变就不碰文件。
 ENV_FILE=$APP_DIR/.env
 tmp_env=$(mktemp)
 trap 'rm -f "$tmp_env"' EXIT
@@ -96,6 +100,10 @@ umask 077
   if [ -n "${GITEE_CLIENT_ID:-}" ] && [ -n "${GITEE_CLIENT_SECRET:-}" ]; then
     printf 'GITEE_CLIENT_ID=%s\n' "$GITEE_CLIENT_ID"
     printf 'GITEE_CLIENT_SECRET=%s\n' "$GITEE_CLIENT_SECRET"
+  fi
+  if [ -n "${ATLASSIAN_CLIENT_ID:-}" ] && [ -n "${ATLASSIAN_CLIENT_SECRET:-}" ]; then
+    printf 'ATLASSIAN_CLIENT_ID=%s\n' "$ATLASSIAN_CLIENT_ID"
+    printf 'ATLASSIAN_CLIENT_SECRET=%s\n' "$ATLASSIAN_CLIENT_SECRET"
   fi
   if [ -n "${DEMO_LOGIN:-}" ]; then
     printf 'DEMO_LOGIN=%s\n' "$DEMO_LOGIN"

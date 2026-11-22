@@ -76,8 +76,8 @@ export interface ItemsPayload {
   github: GithubStatus;
   auth: GithubAuth;
   gitee: GiteeAuth;
-  /** 这一轮服务端手里各家的授权是否还在；面板据此决定构建哪几家。 */
-  connected: { github: boolean; gitee: boolean };
+  /** 这一轮服务端手里各家的授权是否还在；面板据此决定构建哪几家。`jira` 只用于内部自证，没有界面入口。 */
+  connected: { github: boolean; gitee: boolean; jira?: boolean };
 }
 
 export async function fetchItems(

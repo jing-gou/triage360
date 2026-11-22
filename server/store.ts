@@ -28,6 +28,18 @@ export interface GiteeCredential {
   lastRefreshAt: number | null;
 }
 
+/** Jira 3LO：轮换的一对 token 之外，cloudId / 站点 / 账号是每次取数都要用的路由与身份。 */
+export interface JiraCredential {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: number | null;
+  lastRefreshAt: number | null;
+  cloudId: string;
+  siteUrl: string;
+  accountId: string;
+  displayName: string;
+}
+
 export interface Tenant {
   /**
    * 会话标识本体只在这一层内存里出现；落盘的是它的哈希。
@@ -42,6 +54,7 @@ export interface Tenant {
   lastSeenAt: number;
   grants: Partial<Record<Tier, StoredGrant>>;
   gitee?: GiteeCredential;
+  jira?: JiraCredential;
 }
 
 interface StoredGitee {
@@ -49,6 +62,17 @@ interface StoredGitee {
   refreshCipher: string | null;
   expiresAt: number | null;
   lastRefreshAt: number | null;
+}
+
+interface StoredJira {
+  cipher: string;
+  refreshCipher: string | null;
+  expiresAt: number | null;
+  lastRefreshAt: number | null;
+  cloudId: string;
+  siteUrl: string;
+  accountId: string;
+  displayName: string;
 }
 
 interface StoredTenant {
@@ -60,11 +84,12 @@ interface StoredTenant {
   lastSeenAt: number;
   grants: Partial<Record<Tier, { cipher: string; scopes: string[] | null }>>;
   gitee?: StoredGitee;
+  jira?: StoredJira;
 }
 
 interface StoreFile {
-  /** v1 只有 GitHub 两档；v2 起多了 Gitee 的一对 token 与每家自己的登录名。读 v1、写 v2。 */
-  version: 1 | 2;
+  /** v1 只有 GitHub 两档；v2 起多了 Gitee；v3 起多了 Jira 3LO。读 1/2/3，写 3。 */
+  version: 1 | 2 | 3;
   tenants: StoredTenant[];
 }
 
@@ -156,6 +181,39 @@ export class EncryptedStore {
     this.commitGitee(record, this.encryptGitee(credential));
   }
 
+  /**
+   * Jira 3LO 与另外两家并存。账号身份用 Atlassian 的 accountId 核对，不能用展示名——
+   * 展示名会改、也会重名；回调侧拿它挡住「同一会话换了一个 Atlassian 账号」。
+   */
+  attachJira(sessionId: string | null, credential: JiraCredential, login: string, now: number): string {
+    if (sessionId !== null && this.find(sessionId) === undefined) {
+      throw new Error("授权会话已失效");
+    }
+    const id = sessionId ?? this.createTenant(login, now);
+    const tenant = this.tenantRecord(id);
+    if (tenant === undefined) throw new Error("租户记录在写入前消失");
+    tenant.login = tenant.githubLogin ?? tenant.giteeLogin ?? login;
+    tenant.lastSeenAt = now;
+    tenant.jira = this.encryptJira(credential);
+    this.persist();
+    return id;
+  }
+
+  /** 轮换后的整对 Jira token 落盘；和 putGitee 一样，文件写成功才换内存。 */
+  putJira(sessionId: string, credential: JiraCredential): void {
+    const record = this.tenantRecord(sessionId);
+    if (record === undefined || record.jira === undefined) throw new Error("Jira 授权不存在");
+    this.commitJira(record, this.encryptJira(credential));
+  }
+
+  /** 上游判定 Jira 授权失效：只删这一家；租户没有剩余授权时整条删除。 */
+  removeJira(sessionId: string): void {
+    const record = this.tenantRecord(sessionId);
+    if (record === undefined) return;
+    delete record.jira;
+    this.finishRemoval(record, sessionId);
+  }
+
   /** 上游判定 Gitee 授权失效：只删这一家；租户没有剩余授权时整条删除。 */
   removeGitee(sessionId: string): void {
     const record = this.tenantRecord(sessionId);
@@ -216,9 +274,27 @@ export class EncryptedStore {
     this.persist(next);
   }
 
+  private encryptJira(credential: JiraCredential): StoredJira {
+    return {
+      cipher: encrypt(this.key, credential.accessToken),
+      refreshCipher: credential.refreshToken === null ? null : encrypt(this.key, credential.refreshToken),
+      expiresAt: credential.expiresAt,
+      lastRefreshAt: credential.lastRefreshAt,
+      cloudId: credential.cloudId,
+      siteUrl: credential.siteUrl,
+      accountId: credential.accountId,
+      displayName: credential.displayName,
+    };
+  }
+
+  private commitJira(record: StoredTenant, jira: StoredJira): void {
+    const next = this.tenants.map((one) => (one === record ? { ...one, jira } : one));
+    this.persist(next);
+  }
+
   /** 一条记录再没有任何授权就整条删除；否则正常落盘。 */
   private finishRemoval(record: StoredTenant, sessionId: string | null): void {
-    if (Object.keys(record.grants).length === 0 && record.gitee === undefined) {
+    if (Object.keys(record.grants).length === 0 && record.gitee === undefined && record.jira === undefined) {
       if (sessionId !== null) {
         if (!this.delete(sessionId)) throw new Error("删除验证失败");
         return;
@@ -322,6 +398,20 @@ export class EncryptedStore {
               lastRefreshAt: record.gitee.lastRefreshAt,
             },
           }),
+      ...(record.jira === undefined
+        ? {}
+        : {
+            jira: {
+              accessToken: decrypt(this.key, record.jira.cipher),
+              refreshToken: record.jira.refreshCipher === null ? null : decrypt(this.key, record.jira.refreshCipher),
+              expiresAt: record.jira.expiresAt,
+              lastRefreshAt: record.jira.lastRefreshAt,
+              cloudId: record.jira.cloudId,
+              siteUrl: record.jira.siteUrl,
+              accountId: record.jira.accountId,
+              displayName: record.jira.displayName,
+            },
+          }),
     };
   }
 
@@ -329,15 +419,15 @@ export class EncryptedStore {
     if (!existsSync(this.file)) return [];
     const raw = readFileSync(this.file, "utf8");
     const parsed = JSON.parse(raw) as StoreFile;
-    if ((parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.tenants)) {
+    if ((parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) || !Array.isArray(parsed.tenants)) {
       // 形状不对就起不来：带着半懂的账本继续跑，比停机的代价大。
-      throw new Error(`${this.file} 不是 version 1/2 的账本`);
+      throw new Error(`${this.file} 不是 version 1/2/3 的账本`);
     }
     return parsed.tenants;
   }
 
   private persist(next: StoredTenant[] = this.tenants): void {
-    const body: StoreFile = { version: 2, tenants: next };
+    const body: StoreFile = { version: 3, tenants: next };
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(body), { mode: 0o600 });
     chmodSync(tmp, 0o600);

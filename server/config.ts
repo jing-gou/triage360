@@ -15,6 +15,11 @@ export interface ServerConfig {
   github: { clientId: string; clientSecret: string };
   /** Gitee 应用；缺一对就整条 Gitee 链路不启用（面板仍可用 GitHub 与样例）。 */
   gitee: { clientId: string; clientSecret: string } | null;
+  /**
+   * Atlassian 3LO 应用（#19）：仅用于维护者内部自证，面板不提供入口，也不对外声称可连接。
+   * 缺一对就整条 Jira 链路不启用；有它时服务端仍只按会话取数，不向浏览器暴露 token。
+   */
+  atlassian: { clientId: string; clientSecret: string } | null;
   /** 演示代持租户：给了 `DEMO_LOGIN` 才启用公开演示取数与定时刷新。 */
   demo: DemoConfig | null;
   /** 「为什么是这几条」的措辞通道（#8）；钥匙可以为空：空即未配置，接口回 503，面板回落规则理由。 */
@@ -50,6 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServerConfig {
       clientSecret: required(env, "GITHUB_CLIENT_SECRET"),
     },
     gitee: optionalPair(env, "GITEE_CLIENT_ID", "GITEE_CLIENT_SECRET"),
+    atlassian: optionalPair(env, "ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"),
     demo:
       env.DEMO_LOGIN === undefined || env.DEMO_LOGIN === ""
         ? null

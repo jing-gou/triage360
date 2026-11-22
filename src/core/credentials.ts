@@ -68,8 +68,9 @@ export type RotationOutcome =
 
 /**
  * 轮换的原子替换（Atlassian：每个新 refresh token 都让旧的那个失效）。
- * 先整对写库，写成功才把旧 refresh token 交回去退役；写失败返回原记录，
- * 旧的一对继续可用——坏一次轮换不丢租户，重连即可恢复。
+ * 先整对写库，写成功才把旧 refresh token 交回去退役；写失败返回原记录。
+ * 旧 access token 在过期前还能用，但旧 refresh token 是否还能换新由平台决定：
+ * Atlassian 在 token 端点成功时已作废旧的那枚，落盘失败后只能等 access 过期重连。
  */
 export function rotateCredential(
   current: CredentialRecord,
