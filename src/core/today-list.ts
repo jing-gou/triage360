@@ -95,6 +95,11 @@ export interface ListEntry {
    */
   mergedFrom?: readonly Task[];
   /**
+   * 这张卡各来源的标签名并集（#20 的摘要通道要按「标题与标签」上行）。
+   * 与 `reason` 同一个理由挂在条目上：标签不参与归一、打分与合并，任务八键不因它变长。
+   */
+  labels?: readonly string[];
+  /**
    * 这张卡来自上一轮快照时，那个快照的 `generatedAt`。只有本轮取数失败的家才有，
    * 正常取到的卡不带这个键——界面据此决定要不要打「来自 HH:MM 快照」。
    */
@@ -159,8 +164,10 @@ export async function buildTodayList({
         .map(({ task }) => {
           const group = sourceGroupOf(task);
           const hits = boost.get(group);
+          const labels = batch.present.find((one) => one.task.id === task.id)?.labels ?? [];
           return {
             ...baseEntry(task, batch, instant, zoneOffsetMinutes),
+            ...(labels.length === 0 ? {} : { labels }),
             ...(hits === undefined ? {} : { learned: { group, hits } }),
           };
         }),
@@ -259,6 +266,10 @@ function mergeDuplicates(entries: ListEntry[], sameEvent?: SameEvent): ListEntry
       continue;
     }
     home.mergedFrom = [...(home.mergedFrom ?? [home.task]), entry.task];
+    // 标签是摘要通道的输入：一张卡代表这件事的全部来源，标签取并集才说得全（#20）。
+    if (entry.labels !== undefined) {
+      home.labels = [...new Set([...(home.labels ?? []), ...entry.labels])];
+    }
     // 合并卡只要有一侧来自旧快照，整张卡就不算新鲜：水印取最早的那一刻，不把旧数据说新。
     if (
       entry.snapshotAt !== undefined &&
@@ -323,10 +334,17 @@ function compareByRecency(a: { task: Task }, b: { task: Task }): number {
   return byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id);
 }
 
+/** 一条仍在源站的条目：任务、是否已完成、摘要通道要的标签名（#20）。 */
+interface PresentTask {
+  task: Task;
+  done: boolean;
+  labels: readonly string[];
+}
+
 interface ProviderBatch {
   providerId: string;
   /** 这一轮源站仍在的条目（含已完成，不含已删除）；未完成的卡片由这里筛出来。 */
-  present: { task: Task; done: boolean }[];
+  present: PresentTask[];
   /** 任务 id → 它来自哪一刻的快照；成功取数的家为空。 */
   snapshotAt: ReadonlyMap<string, string>;
   failed: boolean;
@@ -363,7 +381,7 @@ async function buildOneSafely(
     return {
       providerId: provider.id,
       // 失败家的条目来自上一轮，那一轮只留未完成的卡片：没有「源站已完成」可判。
-      present: own.map((task) => ({ task, done: false })),
+      present: own.map((task) => ({ task, done: false, labels: [] as readonly string[] })),
       snapshotAt,
       failed: true,
     };
@@ -375,25 +393,28 @@ async function buildOne(
   http: Http,
   scope: Scope,
   previous: readonly Task[],
-): Promise<{ present: { task: Task; done: boolean }[]; unconfirmed: ReadonlySet<string> }> {
+): Promise<{ present: PresentTask[]; unconfirmed: ReadonlySet<string> }> {
   // 空数组 = 这个平台任何状态都不算完成/删除，条目一律留在清单里。
   const done = new Set(provider.doneStates());
   const deleted = new Set(provider.deletedStates());
 
-  const seen = (await provider.search(scope, http)).map(provider.normalize);
+  const seen = (await provider.search(scope, http)).map((raw) => ({
+    task: provider.normalize(raw),
+    labels: provider.labels(raw),
+  }));
 
   // 本轮视图已经给出这条的状态，就不再按 id 问第二次：再问一次只会把上一轮的旧状态请回来。
   const unseen = previous.filter(
-    (task) => task.providerId === provider.id && !seen.some((s) => s.id === task.id),
+    (task) => task.providerId === provider.id && !seen.some((s) => s.task.id === task.id),
   );
   const carried =
     unseen.length === 0 ? { tasks: [], unconfirmed: new Set<string>() } : await carryOver(provider, http, unseen);
 
   // 已完成与未完成用同一次 doneStates 判定：完整视图与水印都从这里读，不另判一遍。
   // 已删除的连完整视图也不留：那是「源站没有了」，不是「做完了」。
-  const present = [...seen, ...carried.tasks]
-    .filter((task) => !deleted.has(task.state))
-    .map((task) => ({ task, done: done.has(task.state) }));
+  const present = [...seen, ...carried.tasks.map((task) => ({ task, labels: [] as readonly string[] }))]
+    .filter(({ task }) => !deleted.has(task.state))
+    .map(({ task, labels }) => ({ task, done: done.has(task.state), labels }));
 
   return { present, unconfirmed: carried.unconfirmed };
 }

@@ -63,6 +63,11 @@ export interface Provider {
   getByIds(ids: string[], http: Http): Promise<RawItem[]>;
   /** 平台原始条目 → 任务。 */
   normalize(raw: RawItem): Task;
+  /**
+   * 条目自带标签名（#20 的摘要通道要按「标题与标签」上行）。
+   * 它不进任务八键：标签只服务措辞，不参与归一、打分与合并。
+   */
+  labels(raw: RawItem): readonly string[];
   /** 哪些状态字面量算「已完成」。 */
   doneStates(): string[];
   /** 哪些状态字面量算「已删除」。 */
@@ -139,3 +144,17 @@ export function dueFrom(raw: string): { dueAt: string; duePrecision: DuePrecisio
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 各家 `labels` 数组的公共读法：GitHub / Gitee 都是 `[{ name }]`，Jira 是字符串数组。
+ * 只收名字、去空去重；provider 各自决定从原始条目的哪个键取，这里只认数组本身。
+ */
+export function labelNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names = value
+    .map((one) => (typeof one === "string" ? one : (one as { name?: unknown })?.name))
+    .filter((one): one is string => typeof one === "string")
+    .map((one) => one.trim())
+    .filter((one) => one !== "");
+  return [...new Set(names)];
+}

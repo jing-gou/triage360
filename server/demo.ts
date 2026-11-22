@@ -1,9 +1,17 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RawItem } from "../src/core/provider";
+import type { Provider, RawItem } from "../src/core/provider";
+import {
+  SUMMARY_CONCURRENCY,
+  SUMMARY_LIMIT,
+  summaryKeyOf as taskSummaryKey,
+} from "../src/core/summary-card";
+import { createGiteeProvider } from "../src/providers/gitee";
+import { createGithubProvider } from "../src/providers/github";
 import type { DemoConfig, ServerConfig } from "./config";
 import type { EncryptedStore } from "./store";
 import { Upstream } from "./upstream";
+import { composeSummary } from "./summary";
 
 /**
  * 演示租户的快照（#15）：服务端按 `DEMO_LOGIN` 找回那本账，定时取数并落盘。
@@ -17,7 +25,14 @@ export interface DemoSnapshot {
   items: RawItem[];
   gitee: RawItem[];
   connected: { github: boolean; gitee: boolean };
+  /**
+   * 「AI 提炼」的演示摘要（#20）：键是 `<html_url>@<updatedAt ISO>`，与面板的缓存键同源。
+   * 演示屏没有会话、不能自己调模型，所以由刷新这侧预生成；键不变就不重算。
+   */
+  summaries: Record<string, string>;
 }
+
+
 
 export class DemoRefresher {
   private readonly file: string;
@@ -25,7 +40,7 @@ export class DemoRefresher {
   private inFlight: Promise<DemoSnapshot | null> | null = null;
 
   constructor(
-    config: ServerConfig,
+    private readonly config: ServerConfig,
     private readonly demo: DemoConfig,
     private readonly store: EncryptedStore,
     private readonly now: () => number,
@@ -97,13 +112,69 @@ export class DemoRefresher {
       items: github.items,
       gitee: gitee?.status === "ok" ? gitee.items : [],
       connected: { github: github.status === "ok", gitee: gitee?.status === "ok" },
+      summaries: { ...(this.current?.summaries ?? {}) },
     };
+    await this.fillSummaries(snapshot);
     this.persist(snapshot);
     this.current = snapshot;
     console.log(
       `[demo] refreshed in ${this.now() - started}ms: github ${snapshot.items.length}, gitee ${snapshot.gitee.length}`,
     );
     return snapshot;
+  }
+
+  /**
+   * 演示摘要：只补缺失的键，失败的留空等下一轮；其余摘要原样保留。
+   * 模型钥匙没配就直接跳过——演示屏退化成「没有提炼按钮」，不是报错。
+   */
+  private async fillSummaries(snapshot: DemoSnapshot): Promise<void> {
+    if (this.config.deepseek.apiKey === "") return;
+    // 完成态的判定跟构建器同一处来：provider 的 doneStates，不在这里再抄一份平台字面量。
+    const githubProvider = createGithubProvider();
+    const giteeProvider = createGiteeProvider();
+    const keyed = (provider: Provider, raw: RawItem) => ({ raw, provider, key: summaryKeyOf(provider, raw) });
+    const github = snapshot.items.map((raw) => keyed(githubProvider, raw));
+    const gitee = snapshot.gitee.map((raw) => keyed(giteeProvider, raw));
+    const all = [...github, ...gitee];
+    const keep = new Set(all.map((one) => one.key).filter((key): key is string => key !== null));
+    snapshot.summaries = Object.fromEntries(
+      Object.entries(snapshot.summaries).filter(([key]) => keep.has(key)),
+    );
+
+    const notDone = (one: { raw: RawItem }, provider: Provider): boolean =>
+      !new Set(provider.doneStates()).has(String(one.raw.state ?? ""));
+    const todo = [
+      ...github.filter((one) => notDone(one, githubProvider)),
+      ...gitee.filter((one) => notDone(one, giteeProvider)),
+    ]
+      .filter((one): one is { raw: RawItem; provider: Provider; key: string } => one.key !== null && snapshot.summaries[one.key] === undefined)
+      .sort((a, b) => String(b.raw.updated_at ?? "").localeCompare(String(a.raw.updated_at ?? "")))
+      .slice(0, SUMMARY_LIMIT);
+    if (todo.length === 0) return;
+
+    const started = this.now();
+    let cursor = 0;
+    let failed = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const at = cursor++;
+        const item = todo[at];
+        if (item === undefined) return;
+        try {
+          const { text } = await composeSummary(this.config.deepseek, {
+            title: typeof item.raw.title === "string" ? item.raw.title : "",
+            labels: [...item.provider.labels(item.raw)],
+          });
+          snapshot.summaries[item.key] = text;
+        } catch {
+          failed += 1;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SUMMARY_CONCURRENCY, todo.length) }, worker));
+    console.log(
+      `[demo] summaries ${todo.length - failed}/${todo.length} ready in ${this.now() - started}ms`,
+    );
   }
 
   private persist(snapshot: DemoSnapshot): void {
@@ -125,9 +196,21 @@ export class DemoRefresher {
       ) {
         return null;
       }
-      return parsed as DemoSnapshot;
+      return { ...(parsed as DemoSnapshot), summaries: parsed.summaries ?? {} };
     } catch {
       return null;
     }
+  }
+}
+
+/**
+ * 演示摘要的键：交给 provider 归一化后的任务 id（`provider:remoteId`）再拼归一化时间，
+ * 与面板的 `summaryKey` 完全同一个口径（provider + issue_id + updated_at）。
+ */
+function summaryKeyOf(provider: Provider, raw: RawItem): string | null {
+  try {
+    return taskSummaryKey(provider.normalize(raw));
+  } catch {
+    return null;
   }
 }

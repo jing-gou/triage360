@@ -19,6 +19,12 @@ import {
   ReasonTimeoutError,
   ReasonUnavailableError,
 } from "./reason";
+import {
+  composeSummary,
+  parseSummaryCard,
+  SummaryTimeoutError,
+  SummaryUnavailableError,
+} from "./summary";
 import type { EncryptedStore } from "./store";
 import type { GiteeSnapshot, JiraSnapshot, Upstream } from "./upstream";
 
@@ -174,6 +180,10 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
 
       if (req.method === "POST" && url.pathname === "/api/reason") {
         return await reasonWording(req, res);
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/summary") {
+        return await summaryWording(req, res);
       }
 
       if (req.method === "POST" && url.pathname === "/api/logout") {
@@ -352,6 +362,35 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
       jira: providerSnapshot(jira),
       connected: { github: githubConnected, gitee: giteeConnected, jira: jiraConnected },
     });
+  }
+
+  /**
+   * 「AI 提炼」（#20）：一次一条，面板并发调用。鉴权与错误映射跟单卡理由同形，
+   * 只是超时放宽到 6 秒（批量摘要不在 2 秒交互承诺里），摘要质量走人工判断。
+   */
+  async function summaryWording(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const id = bearerOf(req);
+    if (id === null || store.find(id) === undefined) return json(res, 401, { error: "unauthenticated" });
+    const body = await readJsonBody(req);
+    const card = body === null ? null : parseSummaryCard(body.card);
+    if (card === null) return json(res, 400, { error: "bad_card" });
+    try {
+      const result = await composeSummary(config.deepseek, card);
+      console.log(`[summary] ok in ${result.elapsedMs}ms`);
+      return json(res, 200, result);
+    } catch (error) {
+      if (error instanceof SummaryUnavailableError) {
+        console.warn("[summary] unavailable: no api key");
+        return json(res, 503, { error: "unavailable" });
+      }
+      if (error instanceof SummaryTimeoutError) {
+        console.warn("[summary] timeout");
+        return json(res, 504, { error: "timeout" });
+      }
+      // 失败只记结果类型，不记标题或上游原文。
+      console.error(`[summary] upstream failed: ${error instanceof Error ? error.message : "unknown"}`);
+      throw error;
+    }
   }
 
   /**

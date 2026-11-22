@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, uniformAuth, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, uniformAuth, labelNames, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 假 provider：按 Gitee Open API v5 的「仓库粒度 issue」形状构造请求，数据来自注入的源站替身。
@@ -85,6 +85,10 @@ export function createGiteeLikeProvider(): Provider {
         dueAt: undefined,
         duePrecision: undefined,
       };
+    },
+
+    labels(raw) {
+      return labelNames((raw as { labels?: unknown }).labels);
     },
 
     doneStates() {

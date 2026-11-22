@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, uniformAuth, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, uniformAuth, labelNames, type Provider, type RawItem, type Task } from "../core/provider";
 
 /**
  * 样例 provider：飞书在 v1 只做第四张样例卡，零真连代码（`docs/PRD.md` 的真实程度表）。
@@ -55,6 +55,10 @@ export function createFeishuSampleProvider(): Provider {
         dueAt: undefined,
         duePrecision: undefined,
       };
+    },
+
+    labels(raw) {
+      return labelNames((raw as { labels?: unknown }).labels);
     },
 
     doneStates() {

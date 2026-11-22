@@ -1,4 +1,4 @@
-import { makeTaskId, remoteIdOf, dueFrom, tieredAuth, type Provider, type RawItem, type Task } from "../core/provider";
+import { makeTaskId, remoteIdOf, dueFrom, tieredAuth, labelNames, type Provider, type RawItem, type Task } from "../core/provider";
 import { GITHUB_TIERS } from "../providers/github";
 
 /**
@@ -73,6 +73,10 @@ export function createGithubLikeProvider(): Provider {
         updatedAt: new Date(issue.updated_at).toISOString(),
         ...(issue.milestone?.due_on ? dueFrom(issue.milestone.due_on) : { dueAt: undefined, duePrecision: undefined }),
       };
+    },
+
+    labels(raw) {
+      return labelNames((raw as { labels?: unknown }).labels);
     },
 
     doneStates() {
