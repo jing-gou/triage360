@@ -234,8 +234,7 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
     // 只摘这一家，另一家的条目照常返回；两家的 raw 形状不同，归一留给浏览器那侧的 provider。
     const github = await upstream.github(tenant, id);
     // 演示账号即使被维护者用会话打开，刷新也归定时器管：请求路径不续期。
-    const isDemoTenant = config.demo !== null && tenant.githubLogin === config.demo.login;
-    const gitee = await upstream.gitee(tenant, id, isDemoTenant);
+    const gitee = await upstream.gitee(tenant, id);
 
     // 租户是 materialize 出来的副本：被摘掉的授权要在副本上同步删掉，否则响应还会报「已连接」。
     const githubConnected = tenant.grants.public !== undefined || tenant.grants.private !== undefined;

@@ -57,13 +57,19 @@ export function createGithubProvider(): Provider {
   return {
     id: PROVIDER_ID,
 
-    async search(_scope, http) {
-      // 身份由 token 决定，`@me` 比传登录名更省一次对账；`is:open` 让已关闭的条目走
-      // 「从视图里消失 → 按 id 补取」那条既有路径，而不是每轮把全部历史指派拉回来。
-      const q = encodeURIComponent("assignee:@me is:issue is:open");
-      const res = await http(`${API}/search/issues?q=${q}&per_page=${PER_PAGE}`);
-      if (res.status !== 200) throw new GithubUpstreamError(res.status);
-      return ((res.body as { items?: RawItem[] }).items ?? []) as RawItem[];
+    async search(scope, http) {
+      // 身份由 token 决定，`@me` 比传登录名更省一次对账。默认只查 `is:open`，让已关闭的条目走
+      // 「从视图里消失 → 按 id 补取」那条既有路径；演示快照要核对 12 条精选，才把 closed 也带回来。
+      const states = scope.includeDone === true ? ["is:open", "is:closed"] : ["is:open"];
+      const batches = await Promise.all(
+        states.map(async (state) => {
+          const q = encodeURIComponent(`assignee:@me is:issue ${state}`);
+          const res = await http(`${API}/search/issues?q=${q}&per_page=${PER_PAGE}`);
+          if (res.status !== 200) throw new GithubUpstreamError(res.status);
+          return ((res.body as { items?: RawItem[] }).items ?? []) as RawItem[];
+        }),
+      );
+      return batches.flat();
     },
 
     // 每轮至多一次，且只针对从视图里消失的旧条目；单条端点 404 视为「这次没有」，

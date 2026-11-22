@@ -58,6 +58,25 @@ describe("seam 1 · 真实 Gitee provider：请求形状", () => {
     ]);
   });
 
+  it("演示快照要核对 12 条精选时，四种状态各查一次，已完成仍被 doneStates 收敛", async () => {
+    const { calls, http } = recordingHttp({
+      open: [issue("A1", "open", "2026-11-16T09:00:00+08:00")],
+      progressing: [],
+      closed: [issue("A2", "closed", "2026-11-16T10:00:00+08:00")],
+      rejected: [issue("A3", "rejected", "2026-11-16T11:00:00+08:00")],
+    });
+
+    const list = await buildTodayList({ ...deps(http), scope: { ...scope, includeDone: true } });
+
+    expect(calls).toEqual([
+      "https://gitee.com/api/v5/user/issues?filter=assigned&state=open&sort=updated&direction=desc&per_page=100",
+      "https://gitee.com/api/v5/user/issues?filter=assigned&state=progressing&sort=updated&direction=desc&per_page=100",
+      "https://gitee.com/api/v5/user/issues?filter=assigned&state=closed&sort=updated&direction=desc&per_page=100",
+      "https://gitee.com/api/v5/user/issues?filter=assigned&state=rejected&sort=updated&direction=desc&per_page=100",
+    ]);
+    expect(list.entries.map((entry) => entry.task.id)).toEqual(["gitee:jing-gou/triage360#A1"]);
+  });
+
   it("403 带明确的错误信息：User-Agent 是官方点名的坑", async () => {
     const http: Http = async () => ({ status: 403, headers: {}, body: null });
 

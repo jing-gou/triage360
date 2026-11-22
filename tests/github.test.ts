@@ -59,6 +59,26 @@ describe("seam 1 · 真实 GitHub provider：请求形状", () => {
       "https://api.github.com/search/issues?q=assignee%3A%40me%20is%3Aissue%20is%3Aopen&per_page=100",
     ]);
   });
+
+  it("演示快照要核对 12 条精选时，把已完成也带回来，但清单仍按 doneStates 收敛", async () => {
+    const calls: string[] = [];
+    const http: Http = async (url) => {
+      calls.push(url);
+      const query = new URL(url).searchParams.get("q") ?? "";
+      const items = query.includes("is:closed")
+        ? [searchItem(1042, "已经关掉的", "closed", "2026-11-16T10:00:00Z")]
+        : [searchItem(1041, "修复登录回调", "open", "2026-11-16T08:20:00Z")];
+      return { status: 200, headers: {}, body: { items } };
+    };
+
+    const list = await buildTodayList({ ...deps(http), scope: { ...scope, includeDone: true } });
+
+    expect(calls).toEqual([
+      "https://api.github.com/search/issues?q=assignee%3A%40me%20is%3Aissue%20is%3Aopen&per_page=100",
+      "https://api.github.com/search/issues?q=assignee%3A%40me%20is%3Aissue%20is%3Aclosed&per_page=100",
+    ]);
+    expect(list.entries.map((entry) => entry.task.title)).toEqual(["修复登录回调"]);
+  });
 });
 
 describe("seam 1 · 真实 GitHub provider：normalize 输出", () => {

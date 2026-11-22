@@ -13,6 +13,8 @@ const PROVIDER_ID = "gitee";
 const PER_PAGE = 100;
 /** 未关闭的两种状态；`closed` / `rejected` 由 doneStates 收敛。 */
 const ACTIVE_STATES = ["open", "progressing"] as const;
+/** 演示快照要核对的已完成状态；真实会话仍只取活跃视图，不把历史指派拉回来。 */
+const DONE_STATES = ["closed", "rejected"] as const;
 
 interface GiteeIssue {
   number: string | number;
@@ -59,9 +61,10 @@ export function createGiteeProvider(): Provider {
   return {
     id: PROVIDER_ID,
 
-    async search(_scope, http) {
+    async search(scope, http) {
+      const states = scope.includeDone === true ? [...ACTIVE_STATES, ...DONE_STATES] : ACTIVE_STATES;
       const batches = await Promise.all(
-        ACTIVE_STATES.map(async (state) => {
+        states.map(async (state) => {
           const res = await http(
             `${API}/user/issues?filter=assigned&state=${state}&sort=updated&direction=desc&per_page=${PER_PAGE}`,
           );

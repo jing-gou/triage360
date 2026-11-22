@@ -49,14 +49,15 @@ export interface Task {
   duePrecision?: DuePrecision;
 }
 
-/** 清单范围：v1 只有「派给我的」。 */
+/** 清单范围：v1 只有「派给我的」；`includeDone` 让演示快照把已完成条目也取回来核对精选数据。 */
 export interface Scope {
   assignee: string;
+  includeDone?: boolean;
 }
 
 export interface Provider {
   readonly id: string;
-  /** 全量当前视图：一次查询返回「此刻范围内有哪些任务」。 */
+  /** 当前视图：默认只取未完成；`includeDone` 时连已完成一起取回，交给 `doneStates` 收敛。 */
   search(scope: Scope, http: Http): Promise<RawItem[]>;
   /** 增量补齐：按 id 取回单条。 */
   getByIds(ids: string[], http: Http): Promise<RawItem[]>;

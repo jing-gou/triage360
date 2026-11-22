@@ -28,7 +28,7 @@
 - **轮次（Round）** — 一次 `buildTodayList` 调用。跨轮状态由调用方保管：构建器读 `previous`，自己不落盘，provider 也不记上一轮。
 - **provider** — 一个平台的适配器，实现七法契约：`search` / `getByIds` / `normalize` / `doneStates` / `deletedStates` / `pollIntervalMs` / `scopeDescriptor`。
 - **假 provider** — 按真实平台形状构造请求并解析响应、数据来自字面量的 provider。唯一的例外是演示样例的截止日：它按「打开面板这一天」相对生成（ADR-0005），为的是展示那天不至于全部逾期，仍然不发网络请求。T09 起被真实接入顶替，接口不变。
-- **范围（Scope）** — 清单查什么。v1 只有「派给谁」。
+- **范围（Scope）** — 清单查什么：派给谁，以及要不要把已完成一起带回来（`includeDone`）。默认只取活跃视图；演示快照要核对 12 条精选（含 2 条已完成）时打开，构建器仍会按 `doneStates` 收敛掉它们。
 - **取数通道（`Http`）** — 注入给 provider 的请求函数。错误信息只暴露 URL 路径，query 可能带凭据。
 - **任务（Task）** — `normalize` 的输出，跨平台共用的最小形状：`id` / `providerId` / `title` / `url` / `state` / `updatedAt` / `dueAt` / `duePrecision`，T03 定稿七键、T04 follow-up 补第八键。八键恒定、不按平台分叉：没有截止时间也要显式写 `dueAt: undefined` 与 `duePrecision: undefined`。`updatedAt` 与 `dueAt` 一律 UTC；平台专有信息不许夹带在八键之外，跨平台共有的语义（截止时间、它写到哪一层精度）属于定稿的一部分。
 - **截止粒度（`duePrecision`）** — 源站写下的那条截止说的是「哪一天」还是「哪一瞬间」，取值 `day` / `instant`，与 `dueAt` 同生同灭。只写日期不带时刻的原值是 `day`：它按日历日比，不属于任何一个时区的 24 小时。折算只发生在 `dueFrom` 一处；`day` 时 `dueAt` 装的是那一天的起点，**时间部分不承载语义**——要那一天就取前 10 个字符，别拿它当时刻用。同生同灭由调用方守：跨轮快照少存这第八个键，打分就静默落回按瞬间比（ADR-0005）。
