@@ -54,10 +54,25 @@ export interface TodayList {
   generatedAt: string;
   entries: ListEntry[];
   /**
+   * 源站这一轮仍在的全部条目，含已完成（#18 的「完整视图」）。
+   * 与 `entries` 同一套理由，排序只多一条「未完成在前」；不参与合并与拖拽——
+   * 它是给人对照的只读视图，不是第二份今日清单。
+   */
+  full: FullEntry[];
+  /**
    * 本轮取数抛错的 provider。这些家的条目来自上一轮，界面据此显示失败态与水印；
    * 其余家照常返回，整轮不会因为一家失败而空掉。
    */
   failures: string[];
+}
+
+/** 完整视图里的一条：`done` 只在源站已完成时为真，今日清单里永远不会出现这种条目。 */
+export interface FullEntry {
+  task: Task;
+  reason: RuleId;
+  done: boolean;
+  /** 这一条来自上一轮快照时的时刻；与清单条目的水印同一个含义。 */
+  snapshotAt?: string;
 }
 
 /**
@@ -139,17 +154,16 @@ export async function buildTodayList({
   const boost = hitsByGroup(placements, instant);
   const entries: ListEntry[] = batches
     .flatMap((batch) =>
-      batch.tasks.map((task) => {
-        const group = sourceGroupOf(task);
-        const hits = boost.get(group);
-        const snapshotAt = batch.snapshotAt.get(task.id);
-        return {
-          task,
-          reason: ruleOf(task, instant, zoneOffsetMinutes),
-          ...(snapshotAt === undefined ? {} : { snapshotAt }),
-          ...(hits === undefined ? {} : { learned: { group, hits } }),
-        };
-      }),
+      batch.present
+        .filter(({ done }) => !done)
+        .map(({ task }) => {
+          const group = sourceGroupOf(task);
+          const hits = boost.get(group);
+          return {
+            ...baseEntry(task, batch, instant, zoneOffsetMinutes),
+            ...(hits === undefined ? {} : { learned: { group, hits } }),
+          };
+        }),
     );
   // 学习加权插在档位**之后**、更新时间之前（ADR-0009）：它表达的是「同一种紧急度里先看哪条」，
   // 不是「这条比逾期还急」。没命中的那些条 `learned` 缺席，取 0，于是这一层是平的，
@@ -158,16 +172,45 @@ export async function buildTodayList({
   // 那个顺序不属于本应用（T05 合并四家之后更明显）。
   entries.sort(
     (a, b) =>
-      RANK[a.reason] - RANK[b.reason] ||
-      (b.learned?.hits ?? 0) - (a.learned?.hits ?? 0) ||
-      byCode(b.task.updatedAt, a.task.updatedAt) ||
-      byCode(a.task.id, b.task.id),
+      compareTier(a, b) || (b.learned?.hits ?? 0) - (a.learned?.hits ?? 0) || compareByRecency(a, b),
+  );
+
+  // 完整视图从同一轮取数里切出来：不额外发请求，也不参与合并与手动顺序（#18）。
+  const full: FullEntry[] = batches.flatMap((batch) =>
+    batch.present.map(({ task, done }) => ({
+      ...baseEntry(task, batch, instant, zoneOffsetMinutes),
+      done,
+    })),
+  );
+  // 未完成在前、已完成在后：未完成沿用今日清单的档位序，已完成只按最近更新排
+  //（它不参与今天做什么，把「逾期/今日到期」的档位套到已完成上只是噪声）。
+  // 这里刻意不接手动顺序与学习加权：完整视图照的是源站条目本身，拖过的顺序只属于今日清单。
+  full.sort(
+    (a, b) =>
+      Number(a.done) - Number(b.done) ||
+      (a.done ? compareByRecency(a, b) : compareTier(a, b) || compareByRecency(a, b)),
   );
 
   return {
     generatedAt: instant,
     entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder),
+    full,
     failures: batches.flatMap((batch) => (batch.failed ? [batch.providerId] : [])),
+  };
+}
+
+/** 一条任务在这一轮里的理由与水印：今日清单与完整视图共用这一处，避免各算一遍。 */
+function baseEntry(
+  task: Task,
+  batch: ProviderBatch,
+  instant: string,
+  zoneOffsetMinutes: number | undefined,
+): Pick<ListEntry, "task" | "reason" | "snapshotAt"> {
+  const snapshotAt = batch.snapshotAt.get(task.id);
+  return {
+    task,
+    reason: ruleOf(task, instant, zoneOffsetMinutes),
+    ...(snapshotAt === undefined ? {} : { snapshotAt }),
   };
 }
 
@@ -270,9 +313,20 @@ function byCode(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** 档位序：逾期 → 今日到期 → 第三档。今日清单与完整视图的未完成组共用。 */
+function compareTier(a: { reason: RuleId }, b: { reason: RuleId }): number {
+  return RANK[a.reason] - RANK[b.reason];
+}
+
+/** 档内序：最近有动静的在前，同刻按 id 破平。今日清单与完整视图共用。 */
+function compareByRecency(a: { task: Task }, b: { task: Task }): number {
+  return byCode(b.task.updatedAt, a.task.updatedAt) || byCode(a.task.id, b.task.id);
+}
+
 interface ProviderBatch {
   providerId: string;
-  tasks: Task[];
+  /** 这一轮源站仍在的条目（含已完成，不含已删除）；未完成的卡片由这里筛出来。 */
+  present: { task: Task; done: boolean }[];
   /** 任务 id → 它来自哪一刻的快照；成功取数的家为空。 */
   snapshotAt: ReadonlyMap<string, string>;
   failed: boolean;
@@ -299,14 +353,20 @@ async function buildOneSafely(
       const known = previousSnapshotAt?.[id] ?? previousGeneratedAt;
       if (known !== undefined) snapshotAt.set(id, known);
     }
-    return { providerId: provider.id, tasks: fresh.tasks, snapshotAt, failed: false };
+    return { providerId: provider.id, present: fresh.present, snapshotAt, failed: false };
   } catch {
     const snapshotAt = new Map<string, string>();
     for (const task of own) {
       const known = previousSnapshotAt?.[task.id] ?? previousGeneratedAt;
       if (known !== undefined) snapshotAt.set(task.id, known);
     }
-    return { providerId: provider.id, tasks: [...own], snapshotAt, failed: true };
+    return {
+      providerId: provider.id,
+      // 失败家的条目来自上一轮，那一轮只留未完成的卡片：没有「源站已完成」可判。
+      present: own.map((task) => ({ task, done: false })),
+      snapshotAt,
+      failed: true,
+    };
   }
 }
 
@@ -315,11 +375,10 @@ async function buildOne(
   http: Http,
   scope: Scope,
   previous: readonly Task[],
-): Promise<{ tasks: Task[]; unconfirmed: ReadonlySet<string> }> {
+): Promise<{ present: { task: Task; done: boolean }[]; unconfirmed: ReadonlySet<string> }> {
   // 空数组 = 这个平台任何状态都不算完成/删除，条目一律留在清单里。
   const done = new Set(provider.doneStates());
   const deleted = new Set(provider.deletedStates());
-  const stillOpen = (task: Task) => !done.has(task.state) && !deleted.has(task.state);
 
   const seen = (await provider.search(scope, http)).map(provider.normalize);
 
@@ -330,7 +389,13 @@ async function buildOne(
   const carried =
     unseen.length === 0 ? { tasks: [], unconfirmed: new Set<string>() } : await carryOver(provider, http, unseen);
 
-  return { tasks: [...seen, ...carried.tasks].filter(stillOpen), unconfirmed: carried.unconfirmed };
+  // 已完成与未完成用同一次 doneStates 判定：完整视图与水印都从这里读，不另判一遍。
+  // 已删除的连完整视图也不留：那是「源站没有了」，不是「做完了」。
+  const present = [...seen, ...carried.tasks]
+    .filter((task) => !deleted.has(task.state))
+    .map((task) => ({ task, done: done.has(task.state) }));
+
+  return { present, unconfirmed: carried.unconfirmed };
 }
 
 /**

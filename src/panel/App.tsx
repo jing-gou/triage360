@@ -277,6 +277,8 @@ type Dialog = "consent" | "revoke" | "clear-local" | "tiers";
 
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
+  /** 完整视图（#18）：展开只切换渲染哪一份，取数在每一轮里早已完成，不会再发请求。 */
+  const [fullViewOpen, setFullViewOpen] = useState(false);
   const [notice, setNotice] = useState<OrderNotice | null>(null);
   const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
   /** 这一屏走的是真实链路：记录服务端还握着哪几家的授权；`null` = 样例屏。 */
@@ -392,7 +394,9 @@ export function App() {
         giteePrevious: payload.gitee.previous,
         failed: failuresFrom(payload, expired),
         now: new Date(),
-        scope: { assignee: payload.login },
+        // 服务端快照里可能带已完成条目（演示租户的 includeDone）：带上它，Gitee 才会把
+        // closed / rejected 的状态也取进完整视图；真实访客的快照没有这些条目，多取两次只会是空集。
+        scope: { assignee: payload.login, includeDone: true },
         zoneOffsetMinutes,
         previous,
         lastGoodAt,
@@ -427,7 +431,9 @@ export function App() {
         giteeItems: snapshot.gitee,
         // 排序基准取快照时刻：访客看到的是那一轮取数的切片，不是「刚刚」。
         now: new Date(snapshot.generatedAt),
-        scope,
+        // 演示快照是唯一确定带已完成条目的来源：Gitee 要把 closed / rejected 也取回来，
+        // 否则「12 条未完成 + 71 条已完成」的 83 条在完整视图里只剩 12 条（#18 AC#3）。
+        scope: { ...scope, includeDone: true },
         zoneOffsetMinutes,
         lastGoodAt,
         manualOrder: local.manualOrder,
@@ -705,11 +711,58 @@ export function App() {
     : problems.length > 0
       ? "这一轮没有可显示的任务，原因在右下角。"
       : "今天没有指派给你的任务。";
+  // 完整视图的入口与计数都从这里读一次，不在 JSX 里各算一遍。
+  const completedCount = list.full.filter((entry) => entry.done).length;
+  const hasFullView = connected !== null && completedCount > 0;
 
   return (
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
-      {list.entries.length === 0 ? (
+      {/* 完整视图只在源站确实带回了已完成条目时出现；样例屏（connected === null）不给，
+          那一屏全是字面量，展开只会把样例当成对照数据。 */}
+      {hasFullView && (
+        <p className="view-toggle-row">
+          <button
+            aria-expanded={fullViewOpen}
+            className="view-toggle"
+            onClick={() => setFullViewOpen(!fullViewOpen)}
+            type="button"
+          >
+            {fullViewOpen ? "收起，回到今日清单" : `展开完整视图（${list.full.length} 条）`}
+          </button>
+          {fullViewOpen && (
+            <span className="view-toggle-note">
+              今日清单 {list.entries.length} 张卡 · 完整视图 {list.full.length} 条源站条目（含已完成{" "}
+              {completedCount}）
+            </span>
+          )}
+        </p>
+      )}
+      {fullViewOpen && hasFullView ? (
+        <ol className="full-list">
+          {list.full.map((entry) => {
+            const { task, reason, done, snapshotAt } = entry;
+            const source = sourceLabel(task.providerId, connected);
+            return (
+              <li className={`full-item${done ? " full-item--done" : ""}`} key={`full-${task.id}`}>
+                <a className="full-item-title" href={task.url}>
+                  {task.title}
+                </a>
+                <span className="full-item-meta">
+                  <span className="card-source">{source.label}</span>
+                  <span className="card-reason">{done ? "已完成" : REASON_LABELS[reason]}</span>
+                  <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
+                  {snapshotAt !== undefined && (
+                    <span className="full-item-snapshot">
+                      来自 {WALL_CLOCK.format(new Date(snapshotAt))} 快照
+                    </span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : list.entries.length === 0 ? (
         <p className={blockedEmpty ? "empty-state empty-state--blocked" : "empty-state"}>{emptyMessage}</p>
       ) : (
         <ol className="cards">
