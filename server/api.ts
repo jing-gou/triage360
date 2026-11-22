@@ -24,6 +24,8 @@ import type { GiteeSnapshot, Upstream } from "./upstream";
 
 const STATE_TTL_MS = 10 * 60_000;
 const MAX_BODY_CHARS = 16_384;
+/** 上一轮 id 走查询串：只用来向源站确认已关闭的条目，超过这个数就不再补。 */
+const MAX_PREVIOUS_IDS = 100;
 
 /** 各档授权「本该」拿到的 scope；和实际授予的一比，就能指出 GitHub 侧被改小（T12）。 */
 const EXPECTED_SCOPES: Record<Tier, string[]> = { public: [SCOPES.public], private: [SCOPES.private] };
@@ -230,11 +232,16 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
     const tenant = id === null ? undefined : store.find(id);
     if (id === null || tenant === undefined) return json(res, 401, { error: "unauthenticated" });
 
+    // 上一轮见过、这一轮活跃视图没返回的 id：只补这些，确认到已关闭的才让卡片消失。
+    const previous = new URL(req.url ?? "/", config.appBaseUrl).searchParams
+      .getAll("previous")
+      .slice(0, MAX_PREVIOUS_IDS);
+
     // 两家各取各的：GitHub 的两档回退与 Gitee 的懒刷新都在 Upstream 里，一家的 401 / 刷新失败
     // 只摘这一家，另一家的条目照常返回；两家的 raw 形状不同，归一留给浏览器那侧的 provider。
-    const github = await upstream.github(tenant, id);
+    const github = await upstream.github(tenant, id, previous);
     // 演示账号即使被维护者用会话打开，刷新也归定时器管：请求路径不续期。
-    const gitee = await upstream.gitee(tenant, id);
+    const gitee = await upstream.gitee(tenant, id, previous);
 
     // 租户是 materialize 出来的副本：被摘掉的授权要在副本上同步删掉，否则响应还会报「已连接」。
     const githubConnected = tenant.grants.public !== undefined || tenant.grants.private !== undefined;
@@ -247,13 +254,19 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
 
     res.setHeader("Cache-Control", "no-store");
     return json(res, 200, {
-      items: github?.items ?? [],
+      items: github.items,
       login: tenant.login,
+      // 逐家状态：面板要区分「没连过 / 授权过期 / 上游故障」，不能只看条目是否为空。
+      github: {
+        status: github.status,
+        ...(github.detail === undefined ? {} : { detail: github.detail }),
+        previous: github.previous,
+      },
       auth: {
         grants: scopesOf(tenant),
-        used: github?.used ?? null,
+        used: github.used,
         expected: EXPECTED_SCOPES,
-        dropped: github?.dropped ?? [],
+        dropped: github.dropped,
       },
       gitee: giteeSnapshot(gitee),
       connected: { github: githubConnected, gitee: giteeConnected },
@@ -298,12 +311,13 @@ export function createHandler({ config, store, now, demo, upstream }: HandlerDep
 function giteeSnapshot(snapshot: GiteeSnapshot | null): {
   status: "ok" | "reauth" | "unavailable" | "none";
   items: RawItem[];
+  previous: RawItem[];
   detail?: string;
 } {
-  if (snapshot === null) return { status: "none", items: [] };
-  if (snapshot.status === "ok") return { status: "ok", items: snapshot.items };
-  if (snapshot.status === "reauth") return { status: "reauth", items: [] };
-  return { status: "unavailable", items: [], detail: snapshot.detail };
+  if (snapshot === null) return { status: "none", items: [], previous: [] };
+  if (snapshot.status === "ok") return { status: "ok", items: snapshot.items, previous: snapshot.previous };
+  if (snapshot.status === "reauth") return { status: "reauth", items: [], previous: [] };
+  return { status: "unavailable", items: [], previous: [], detail: snapshot.detail };
 }
 
 function scopesOf(tenant: { grants: Partial<Record<Tier, { scopes: string[] | null }>> }): Partial<

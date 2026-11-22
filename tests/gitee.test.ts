@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildTodayList } from "../src/core/today-list";
 import type { Http, Scope, Task } from "../src/core/provider";
-import { createGiteeProvider, GiteeUpstreamError } from "../src/providers/gitee";
+import { createGiteeProvider } from "../src/providers/gitee";
 
 const scope: Scope = { assignee: "triage360-demo" };
 const clock = () => new Date("2026-11-17T09:00:00+08:00");
@@ -77,11 +77,13 @@ describe("seam 1 · 真实 Gitee provider：请求形状", () => {
     expect(list.entries.map((entry) => entry.task.id)).toEqual(["gitee:jing-gou/triage360#A1"]);
   });
 
-  it("403 带明确的错误信息：User-Agent 是官方点名的坑", async () => {
+  it("403 收敛成这一家的失败，不拖垮整轮", async () => {
     const http: Http = async () => ({ status: 403, headers: {}, body: null });
 
-    await expect(buildTodayList(deps(http))).rejects.toBeInstanceOf(GiteeUpstreamError);
-    await expect(buildTodayList(deps(http))).rejects.toThrow(/403.*User-Agent/);
+    const list = await buildTodayList(deps(http));
+
+    expect(list.failures).toEqual(["gitee"]);
+    expect(list.entries).toEqual([]);
   });
 });
 

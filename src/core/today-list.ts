@@ -15,6 +15,15 @@ export interface TodayListDeps {
    */
   previous?: readonly Task[];
   /**
+   * 上一轮构建的 `generatedAt`，失败家沿用它当卡片水印。省略时不打水印，不拿本轮时间冒充快照。
+   */
+  previousGeneratedAt?: string;
+  /**
+   * 上一轮里已经带水印的条目：任务 id → 最后一次成功取数的时刻。
+   * 连续失败时水印必须停在那一刻，不能被后一轮的 `previousGeneratedAt` 往后滚。
+   */
+  previousSnapshotAt?: Readonly<Record<string, string>>;
+  /**
    * 访客相对 UTC 的分钟偏移（UTC+8 是 480），用来把「今日」判成访客日历里的今天。
    * 省略即 UTC 日界。构建器不自己读宿主时区：那样同一个输入在 CI（TZ=UTC）
    * 与用户浏览器里会判出两种顺序，门内绿的正是线上错的。
@@ -44,6 +53,11 @@ export interface TodayList {
   /** 构建器运行那一刻，来自注入的时钟。 */
   generatedAt: string;
   entries: ListEntry[];
+  /**
+   * 本轮取数抛错的 provider。这些家的条目来自上一轮，界面据此显示失败态与水印；
+   * 其余家照常返回，整轮不会因为一家失败而空掉。
+   */
+  failures: string[];
 }
 
 /**
@@ -65,6 +79,11 @@ export interface ListEntry {
    * #8 的「为什么是这几条」与界面上的逐个跳转都读它。
    */
   mergedFrom?: readonly Task[];
+  /**
+   * 这张卡来自上一轮快照时，那个快照的 `generatedAt`。只有本轮取数失败的家才有，
+   * 正常取到的卡不带这个键——界面据此决定要不要打「来自 HH:MM 快照」。
+   */
+  snapshotAt?: string;
 }
 
 /** 学习加权命中的那个来源分组，以及它在窗口内被置顶的次数（`#10`）。 */
@@ -100,28 +119,38 @@ export async function buildTodayList({
   now,
   scope,
   previous = [],
+  previousGeneratedAt,
+  previousSnapshotAt,
   zoneOffsetMinutes,
   sameEvent,
   manualOrder,
   placements = [],
 }: TodayListDeps): Promise<TodayList> {
-  const batches = await Promise.all(providers.map((provider) => buildOne(provider, http, scope, previous)));
+  // 一家抛错只让这一家失败：其余家的 Promise 照常结算，失败家用上一轮的任务补位。
+  const batches = await Promise.all(
+    providers.map((provider) =>
+      buildOneSafely(provider, http, scope, previous, previousGeneratedAt, previousSnapshotAt),
+    ),
+  );
 
   // 打分（T04）先按规则分堆，堆内按最近有动静排。
   // normalize 已把各家时间统一成 UTC，字符串比较才成立；时钟只取一次，同一轮里不许变。
   const instant = now().toISOString();
   const boost = hitsByGroup(placements, instant);
   const entries: ListEntry[] = batches
-    .flat()
-    .map((task) => {
-      const group = sourceGroupOf(task);
-      const hits = boost.get(group);
-      return {
-        task,
-        reason: ruleOf(task, instant, zoneOffsetMinutes),
-        ...(hits === undefined ? {} : { learned: { group, hits } }),
-      };
-    });
+    .flatMap((batch) =>
+      batch.tasks.map((task) => {
+        const group = sourceGroupOf(task);
+        const hits = boost.get(group);
+        const snapshotAt = batch.snapshotAt.get(task.id);
+        return {
+          task,
+          reason: ruleOf(task, instant, zoneOffsetMinutes),
+          ...(snapshotAt === undefined ? {} : { snapshotAt }),
+          ...(hits === undefined ? {} : { learned: { group, hits } }),
+        };
+      }),
+    );
   // 学习加权插在档位**之后**、更新时间之前（ADR-0009）：它表达的是「同一种紧急度里先看哪条」，
   // 不是「这条比逾期还急」。没命中的那些条 `learned` 缺席，取 0，于是这一层是平的，
   // 比较落到原来的 updatedAt → 码元序，ADR-0005 定下来的档内序一个字没动。
@@ -135,7 +164,11 @@ export async function buildTodayList({
       byCode(a.task.id, b.task.id),
   );
 
-  return { generatedAt: instant, entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder) };
+  return {
+    generatedAt: instant,
+    entries: applyManualOrder(mergeDuplicates(entries, sameEvent), manualOrder),
+    failures: batches.flatMap((batch) => (batch.failed ? [batch.providerId] : [])),
+  };
 }
 
 /**
@@ -178,8 +211,18 @@ function mergeDuplicates(entries: ListEntry[], sameEvent?: SameEvent): ListEntry
   const groups: ListEntry[] = [];
   for (const entry of entries) {
     const home = groups.find((head) => sameEvent(head.task, entry.task));
-    if (home === undefined) groups.push(entry);
-    else home.mergedFrom = [...(home.mergedFrom ?? [home.task]), entry.task];
+    if (home === undefined) {
+      groups.push(entry);
+      continue;
+    }
+    home.mergedFrom = [...(home.mergedFrom ?? [home.task]), entry.task];
+    // 合并卡只要有一侧来自旧快照，整张卡就不算新鲜：水印取最早的那一刻，不把旧数据说新。
+    if (
+      entry.snapshotAt !== undefined &&
+      (home.snapshotAt === undefined || entry.snapshotAt < home.snapshotAt)
+    ) {
+      home.snapshotAt = entry.snapshotAt;
+    }
   }
   return groups;
 }
@@ -225,6 +268,44 @@ function dayOf(instant: string, zoneOffsetMinutes?: number): string {
  */
 function byCode(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+interface ProviderBatch {
+  providerId: string;
+  tasks: Task[];
+  /** 任务 id → 它来自哪一刻的快照；成功取数的家为空。 */
+  snapshotAt: ReadonlyMap<string, string>;
+  failed: boolean;
+}
+
+/**
+ * 一家的失败不上升到整轮：抛错就退回上一轮这一家的任务，并把它们标成旧快照。
+ * 没有上一轮可退时只记一笔失败，其余家仍照常出现在清单里。
+ */
+async function buildOneSafely(
+  provider: Provider,
+  http: Http,
+  scope: Scope,
+  previous: readonly Task[],
+  previousGeneratedAt: string | undefined,
+  previousSnapshotAt: Readonly<Record<string, string>> | undefined,
+): Promise<ProviderBatch> {
+  const own = previous.filter((task) => task.providerId === provider.id);
+  try {
+    return {
+      providerId: provider.id,
+      tasks: await buildOne(provider, http, scope, previous),
+      snapshotAt: new Map(),
+      failed: false,
+    };
+  } catch {
+    const snapshotAt = new Map<string, string>();
+    for (const task of own) {
+      const known = previousSnapshotAt?.[task.id] ?? previousGeneratedAt;
+      if (known !== undefined) snapshotAt.set(task.id, known);
+    }
+    return { providerId: provider.id, tasks: [...own], snapshotAt, failed: true };
+  }
 }
 
 async function buildOne(

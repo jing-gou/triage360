@@ -72,6 +72,18 @@ body {
   text-decoration: underline;
 }
 
+.corner-link:disabled {
+  opacity: 0.6;
+  cursor: default;
+  text-decoration: none;
+}
+
+/* 异常态不是另一块状态卡：仍在同一个角标里，只把颜色换成提醒色。 */
+.corner-link--alert,
+.corner-alert {
+  color: var(--alert);
+}
+
 .cards {
   list-style: none;
   margin: 0;
@@ -122,6 +134,20 @@ body {
   top: calc(15px * var(--site-space, 1));
   color: var(--site-muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 过期水印只落在这一轮没取到的那几张卡右上角；标题留出它的位置，不压在字上。 */
+.card--stale {
+  padding-right: calc(148px * var(--site-space, 1));
+}
+
+.card-snapshot {
+  position: absolute;
+  top: calc(14px * var(--site-space, 1));
+  right: calc(16px * var(--site-space, 1));
+  color: var(--site-muted);
+  font-size: calc(11px * var(--site-type, 1));
   font-variant-numeric: tabular-nums;
 }
 
@@ -213,6 +239,30 @@ a.card-source:hover {
 .card--dueToday .card-reason {
   color: var(--site-accent);
   font-weight: 500;
+}
+
+/*
+  空清单分两种：今天确实没事，和授权/取数挡住了清单。
+  后者的句子换成提醒色——同一块版面，读第一眼就知道该去右下角处理。
+*/
+.empty-state {
+  margin: calc(28px * var(--site-space, 1)) 0;
+  color: var(--muted);
+  font-size: calc(14px * var(--site-type, 1));
+  line-height: 1.7;
+  text-align: center;
+}
+
+.empty-state--blocked {
+  color: var(--alert);
+}
+
+/* 窄屏上水印仍占右上角，但标题改到它下面一整行，别让两边挤在一起。 */
+@media (max-width: 480px) {
+  .card--stale {
+    padding-top: calc(34px * var(--site-space, 1));
+    padding-right: calc(16px * var(--site-space, 1));
+  }
 }
 
 /* 首次排序说明：一层遮罩 + 一块居中的话，看完就走，不留常驻入口。 */

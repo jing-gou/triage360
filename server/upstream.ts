@@ -1,5 +1,5 @@
 import { decideCredentialAction, recordRefreshAttempt, rotateCredential, type CredentialRecord } from "../src/core/credentials";
-import type { RawItem, Tier } from "../src/core/provider";
+import type { Http, Provider, RawItem, Tier } from "../src/core/provider";
 import { createGiteeProvider, GiteeUpstreamError } from "../src/providers/gitee";
 import { createGithubProvider, GithubUpstreamError } from "../src/providers/github";
 import type { ServerConfig } from "./config";
@@ -12,16 +12,27 @@ import type { EncryptedStore, GiteeCredential, Tenant } from "./store";
  * 两家的失败互不遮掩——一家 401 只摘这一家的授权，另一家的条目照常返回（ADR-0003）。
  */
 
+/**
+ * GitHub 的一次取数结果。`none` 是没连过，`reauth` 是所有档都被 401 摘掉，
+ * `unavailable` 是上游故障但仍保留授权（下一轮还能再试）。三者对访客的意思不同。
+ */
 export interface GithubSnapshot {
+  status: "ok" | "reauth" | "unavailable" | "none";
   items: RawItem[];
-  used: Tier;
+  /**
+   * 上一轮有、这一轮的活跃视图没返回的条目，按 id 向源站确认后的原始记录。
+   * 面板据此走 `deletedStates`：确认到已关闭才让卡片消失，404 仍按 ADR-0003 保留。
+   */
+  previous: RawItem[];
+  used: Tier | null;
   dropped: Tier[];
+  detail?: string;
 }
 
 export type GiteeSnapshot =
-  | { status: "ok"; items: RawItem[] }
-  | { status: "reauth" }
-  | { status: "unavailable"; detail: string };
+  | { status: "ok"; items: RawItem[]; previous: RawItem[] }
+  | { status: "reauth"; previous: RawItem[] }
+  | { status: "unavailable"; detail: string; previous: RawItem[] };
 
 /**
  * 只放行 provider 归一化要用的字段（Q23 的字段边界）：正文、评论、diff 既不进 demo.json，
@@ -53,6 +64,28 @@ function giteeMeta(item: RawItem): RawItem {
   };
 }
 
+/**
+ * 只补「上一轮见过、本轮活跃视图没有」的 id：确认到已关闭的记录能收敛掉，
+ * 404 或确认请求失败都从返回数组里省略，交给 ADR-0003 的「未返回视为跳过」保留原卡。
+ * 确认失败不能把整家翻成 unavailable——活跃视图已经取到了，旧卡只是这一轮没被确认。
+ */
+async function confirmPrevious(
+  provider: Provider,
+  active: readonly RawItem[],
+  ids: readonly string[],
+  http: Http,
+  meta: (item: RawItem) => RawItem,
+): Promise<RawItem[]> {
+  const have = new Set(active.map((item) => provider.normalize(item).id));
+  const missing = ids.filter((id) => id.startsWith(`${provider.id}:`) && !have.has(id));
+  if (missing.length === 0) return [];
+  try {
+    return (await provider.getByIds(missing, http)).map(meta);
+  } catch {
+    return [];
+  }
+}
+
 export class Upstream {
   /**
    * 同一份 Gitee 授权只跑一次刷新：两个请求同时看见过期就会各换一次，后失败的那个
@@ -72,28 +105,37 @@ export class Upstream {
     return this.config.demo !== null && tenant.githubLogin === this.config.demo.login;
   }
 
-  async github(tenant: Tenant, sessionId: string | null): Promise<GithubSnapshot | null> {
+  async github(tenant: Tenant, sessionId: string | null, previousIds: readonly string[] = []): Promise<GithubSnapshot> {
     const order: Tier[] = tenant.grants.private !== undefined ? ["private", "public"] : ["public"];
     // 演示快照要核对 12 条精选（含 2 条已完成），所以演示账号连 closed 一起取；
     // 访客自己的账号仍只取活跃视图，不把历史指派拉回来。
     const includeDone = this.isDemoTenant(tenant);
     const dropped: Tier[] = [];
+    let attempted = false;
     for (const tier of order) {
       const grant = tenant.grants[tier];
       if (grant === undefined) continue;
+      attempted = true;
       let scopesObserved = false;
       let liveScopes: string[] | null = null;
       const http = createGithubHttp(grant.token, fetch, (scopes) => {
         scopesObserved = true;
         liveScopes = scopes;
       });
+      const provider = createGithubProvider();
       try {
-        const items = await createGithubProvider().search({ assignee: tenant.githubLogin ?? tenant.login, includeDone }, http);
+        const items = await provider.search({ assignee: tenant.githubLogin ?? tenant.login, includeDone }, http);
         if (scopesObserved && sessionId !== null) {
           this.store.setScopes(sessionId, tier, liveScopes);
           grant.scopes = liveScopes;
         }
-        return { items: items.map(githubMeta), used: tier, dropped };
+        return {
+          status: "ok",
+          items: items.map(githubMeta),
+          previous: await confirmPrevious(provider, items, previousIds, http, githubMeta),
+          used: tier,
+          dropped,
+        };
       } catch (error) {
         if (error instanceof GithubUpstreamError && error.status === 401) {
           if (sessionId !== null) this.store.removeGrant(sessionId, tier);
@@ -102,17 +144,25 @@ export class Upstream {
           dropped.push(tier);
           continue;
         }
-        throw error;
+        // 非 401 是这一轮的上游故障，别把它折成「没连过」；授权还在，下一轮可以再试。
+        return {
+          status: "unavailable",
+          items: [],
+          previous: [],
+          used: null,
+          dropped,
+          detail: error instanceof Error ? error.message : "GitHub 不可达",
+        };
       }
     }
-    return null;
+    return { status: attempted ? "reauth" : "none", items: [], previous: [], used: null, dropped };
   }
 
   /**
    * Gitee 的一天过期在这里落地：真实租户在访问时懒刷新，演示租户由定时器按同一判定触发。
    * 刷新失败但旧 token 还未过期就继续用；已经过期才摘掉授权并显式回报 reauth。
    */
-  async gitee(tenant: Tenant, sessionId: string | null): Promise<GiteeSnapshot | null> {
+  async gitee(tenant: Tenant, sessionId: string | null, previousIds: readonly string[] = []): Promise<GiteeSnapshot | null> {
     if (tenant.gitee === undefined) return null;
     const isDemoTenant = this.isDemoTenant(tenant);
     const key = tenant.giteeLogin ?? tenant.login;
@@ -132,14 +182,19 @@ export class Upstream {
       }
       return snapshot;
     }
-    const run = this.fetchGitee(tenant, sessionId, isDemoTenant).finally(() => {
+    const run = this.fetchGitee(tenant, sessionId, isDemoTenant, previousIds).finally(() => {
       this.giteeInFlight.delete(key);
     });
     this.giteeInFlight.set(key, run);
     return await run;
   }
 
-  private async fetchGitee(tenant: Tenant, sessionId: string | null, isDemoTenant: boolean): Promise<GiteeSnapshot | null> {
+  private async fetchGitee(
+    tenant: Tenant,
+    sessionId: string | null,
+    isDemoTenant: boolean,
+    previousIds: readonly string[],
+  ): Promise<GiteeSnapshot | null> {
     const stored = tenant.gitee;
     if (stored === undefined) return null;
     const persist = (next: GiteeCredential): void => {
@@ -154,7 +209,7 @@ export class Upstream {
     };
     const reauth = (): GiteeSnapshot => {
       remove();
-      return { status: "reauth" };
+      return { status: "reauth", previous: [] };
     };
 
     let current: CredentialRecord = { ...stored };
@@ -192,15 +247,25 @@ export class Upstream {
     }
 
     try {
-      const items = await createGiteeProvider().search(
+      const provider = createGiteeProvider();
+      const http = createGiteeHttp(current.accessToken);
+      const items = await provider.search(
         { assignee: tenant.giteeLogin ?? tenant.login, includeDone: isDemoTenant },
-        createGiteeHttp(current.accessToken),
+        http,
       );
       tenant.gitee = current;
-      return { status: "ok", items: items.map(giteeMeta) };
+      return {
+        status: "ok",
+        items: items.map(giteeMeta),
+        previous: await confirmPrevious(provider, items, previousIds, http, giteeMeta),
+      };
     } catch (error) {
       if (error instanceof GiteeUpstreamError && error.status === 401) return reauth();
-      return { status: "unavailable", detail: error instanceof Error ? error.message : "Gitee 不可达" };
+      return {
+        status: "unavailable",
+        previous: [],
+        detail: error instanceof Error ? error.message : "Gitee 不可达",
+      };
     }
   }
 

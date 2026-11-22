@@ -49,26 +49,45 @@ export interface GithubAuth {
   dropped: Tier[];
 }
 
-/** Gitee 侧这一段：`none` 是没连过，`reauth` 是刚被上游摘掉——两者对访客的意思不同。 */
-export interface GiteeAuth {
+/** 一家的取数结果：`none` 是没连过，`reauth` 是授权被摘掉，`unavailable` 是上游故障但授权还在。 */
+export interface ProviderStatus {
   status: "ok" | "reauth" | "unavailable" | "none";
-  items: unknown[];
   /** `unavailable` 时给一句可读的原因；不含上游原文之外的凭据。 */
   detail?: string;
 }
 
+/** 上一轮见过、这一轮活跃视图没返回的条目：服务端按 id 向源站核对后的原始记录。 */
+export interface PreviousRecords {
+  previous: unknown[];
+}
+
+/** Gitee 侧这一段：状态与条目一起回来。 */
+export interface GiteeAuth extends ProviderStatus, PreviousRecords {
+  items: unknown[];
+}
+
+export type GithubStatus = ProviderStatus & PreviousRecords;
+
 export interface ItemsPayload {
-  /** GitHub 的原始条目；GitHub 未授权时为空数组。 */
+  /** GitHub 的原始条目；GitHub 未授权或这一轮取数失败时为空数组。 */
   items: unknown[];
   login: string;
+  github: GithubStatus;
   auth: GithubAuth;
   gitee: GiteeAuth;
-  /** 这一轮服务端手里各家的授权是否还在；面板只构建还连着的家。 */
+  /** 这一轮服务端手里各家的授权是否还在；面板据此决定构建哪几家。 */
   connected: { github: boolean; gitee: boolean };
 }
 
-export async function fetchItems(base: string, session: string): Promise<ItemsPayload> {
-  const res = await fetch(`${base}/api/items`, { headers: { Authorization: `Bearer ${session}` } });
+export async function fetchItems(
+  base: string,
+  session: string,
+  previousIds: readonly string[] = [],
+): Promise<ItemsPayload> {
+  const query = new URLSearchParams();
+  for (const id of previousIds.slice(0, 100)) query.append("previous", id);
+  const suffix = query.toString() === "" ? "" : `?${query.toString()}`;
+  const res = await fetch(`${base}/api/items${suffix}`, { headers: { Authorization: `Bearer ${session}` } });
   if (res.status === 401) throw new UnauthenticatedError(`items 返回 401`);
   if (!res.ok) throw new Error(`items 返回 ${res.status}`);
   return (await res.json()) as ItemsPayload;
