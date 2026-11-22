@@ -277,6 +277,8 @@ type Dialog = "consent" | "revoke" | "clear-local" | "tiers";
 
 export function App() {
   const [list, setList] = useState<TodayList | null>(null);
+  /** 全量对照视图（#18）：展开只切换渲染哪一份，取数在每一轮里早已完成，不会再发请求。 */
+  const [expanded, setExpanded] = useState(false);
   const [notice, setNotice] = useState<OrderNotice | null>(null);
   const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
   /** 这一屏走的是真实链路：记录服务端还握着哪几家的授权；`null` = 样例屏。 */
@@ -709,7 +711,46 @@ export function App() {
   return (
     <main className="panel">
       <h1 className="panel-title">今日清单</h1>
-      {list.entries.length === 0 ? (
+      {list.full.length > list.entries.length && (
+        <p className="view-toggle-row">
+          <button
+            aria-expanded={expanded}
+            className="view-toggle"
+            onClick={() => setExpanded(!expanded)}
+            type="button"
+          >
+            {expanded
+              ? `收起，回到今日清单（${list.entries.length} 条）`
+              : `展开完整视图（${list.full.length} 条）`}
+          </button>
+          {expanded && (
+            <span className="view-toggle-note">
+              含已完成 {list.full.filter((entry) => entry.done).length} 条；今日清单仍然只有{" "}
+              {list.entries.length} 条
+            </span>
+          )}
+        </p>
+      )}
+      {expanded && list.full.length > list.entries.length ? (
+        <ol className="full-list">
+          {list.full.map((entry) => {
+            const { task, reason, done } = entry;
+            const source = sourceLabel(task.providerId, connected);
+            return (
+              <li className={`full-item${done ? " full-item--done" : ""}`} key={`full-${task.id}`}>
+                <a className="full-item-title" href={task.url}>
+                  {task.title}
+                </a>
+                <span className="full-item-meta">
+                  <span className="card-source">{source.label}</span>
+                  <span className="card-reason">{done ? "已完成" : REASON_LABELS[reason]}</span>
+                  <span>更新于 {formatTime(task.updatedAt, generatedAt)}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : list.entries.length === 0 ? (
         <p className={blockedEmpty ? "empty-state empty-state--blocked" : "empty-state"}>{emptyMessage}</p>
       ) : (
         <ol className="cards">
